@@ -1,0 +1,22 @@
+node_modules/
+dist/
+build/
+coverage/
+.vite/
+*.tsbuildinfo
+
+.env
+.env.*
+!.env.example
+
+.DS_Store
+Thumbs.db
+
+*.log
+npm-debug.log*
+
+# Screenshots from the layout check, not source.
+.shots/
+
+# A local database file, if one is ever used for development.
+data/
