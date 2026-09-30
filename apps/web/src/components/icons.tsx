@@ -1,0 +1,145 @@
+/**
+ * The school crest, and the few icons used more than once.
+ *
+ * Icons are inline SVG rather than a dependency. They are twenty lines each, a
+ * library would be a hundred kilobytes, and the ones this app needs are the
+ * ones a librarian recognises: a book going out, a warning, a door.
+ *
+ * Every icon is `aria-hidden`. An icon beside a label is decoration; announcing
+ * it duplicates the label for anyone using a screen reader.
+ */
+import type * as React from 'react'
+
+interface IconProps extends React.SVGProps<SVGSVGElement> {
+  className?: string
+}
+
+const base = {
+  viewBox: '0 0 24 24',
+  fill: 'none',
+  stroke: 'currentColor',
+  strokeWidth: 1.75,
+  strokeLinecap: 'round' as const,
+  strokeLinejoin: 'round' as const,
+}
+
+export function BookPlus({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v18H6.5A2.5 2.5 0 0 0 4 22Z" />
+      <path d="M20 16H6.5a2.5 2.5 0 0 0 0 5H20" />
+      <path d="M12 6v6M9 9h6" />
+    </svg>
+  )
+}
+
+export function TableIcon({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M3 10h18M9 10v10" />
+    </svg>
+  )
+}
+
+export function Upload({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+      <path d="M7 9l5-5 5 5M12 4v12" />
+    </svg>
+  )
+}
+
+export function Archive({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <rect x="3" y="4" width="18" height="4" rx="1" />
+      <path d="M5 8v11a1 1 0 0 0 1 1h12a1 1 0 0 0 1-1V8" />
+      <path d="M10 12h4" />
+    </svg>
+  )
+}
+
+export function Search({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m20 20-3.5-3.5" />
+    </svg>
+  )
+}
+
+export function TriangleAlert({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
+      <path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0Z" />
+      <path d="M12 9v4M12 17h.01" />
+    </svg>
+  )
+}
+
+export function PanelLeft({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <path d="M9 4v16" />
+    </svg>
+  )
+}
+
+export function LockKeyhole({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
+      <circle cx="12" cy="16" r="1" />
+      <rect x="4" y="10" width="16" height="11" rx="2" />
+      <path d="M8 10V7a4 4 0 0 1 8 0v3" />
+    </svg>
+  )
+}
+
+export function LogIn({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
+      <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+      <path d="M10 17l5-5-5-5M15 12H3" />
+    </svg>
+  )
+}
+
+export function UserPlus({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
+      <circle cx="10" cy="8" r="4" />
+      <path d="M3 21a7 7 0 0 1 14 0" />
+      <path d="M19 8v6M16 11h6" />
+    </svg>
+  )
+}
+
+/**
+ * The crest.
+ *
+ * Drawn rather than a photograph because it must stay sharp at 40px on a
+ * sidebar and at 96px on a sign-in screen, and because an official emblem is
+ * better represented by something legible than by something photographic and
+ * grey at small sizes.
+ */
+export function SchoolLogo({ size = 52, className }: { size?: number; className?: string }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 64 64"
+      role="img"
+      aria-label="Dandora Secondary School"
+      className={className}
+    >
+      <rect width="64" height="64" rx="14" fill="var(--color-primary)" />
+      {/* An open book. Two pages, so it reads at 40px where a single shape is a blob. */}
+      <path d="M12 20h17a5 5 0 0 1 5 5v21a6 6 0 0 0-6-4H12Z" fill="#fff" opacity="0.95" />
+      <path d="M52 20H35a5 5 0 0 0-5 5v21a6 6 0 0 1 6-4h16Z" fill="var(--color-accent)" />
+      <path d="M32 25v21" stroke="var(--color-primary)" strokeWidth="1.5" />
+    </svg>
+  )
+}

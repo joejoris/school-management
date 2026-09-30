@@ -1,0 +1,126 @@
+/**
+ * The theme.
+ *
+ * Colours are CSS variables rather than Tailwind's palette so the school can
+ * change them in one place, and so contrast can be checked once here rather than
+ * guessed at across a dozen screens.
+ *
+ * The wash behind the app is a very pale green — printed-paper green rather than
+ * a saturated one. It sits behind every screen at low contrast on purpose: it
+ * should read as a desk, not as a colour.
+ */
+
+@import 'tailwindcss';
+
+@source '../index.html';
+@source './src';
+/*
+ * Tests are excluded on purpose.
+ *
+ * A class that appears only in a test would otherwise be generated in the
+ * production stylesheet, and the test that asserts "every class we use is one
+ * Tailwind actually generated" would pass against a build carrying classes
+ * nothing renders. That is a circular guard, and circular guards pass forever.
+ */
+@source not './test';
+
+@theme {
+  --color-paper: oklch(0.985 0.006 150);
+  --color-ink: oklch(0.24 0.02 165);
+
+  --color-primary: oklch(0.44 0.09 165);
+  --color-primary-foreground: oklch(0.99 0.005 150);
+
+  --color-secondary: oklch(0.95 0.012 160);
+  --color-secondary-foreground: oklch(0.3 0.03 165);
+
+  --color-muted: oklch(0.955 0.008 160);
+  --color-muted-foreground: oklch(0.5 0.02 165);
+
+  --color-accent: oklch(0.93 0.05 95);
+  --color-accent-foreground: oklch(0.35 0.06 80);
+
+  --color-destructive: oklch(0.52 0.17 25);
+  --color-destructive-foreground: oklch(0.99 0.005 25);
+
+  --color-border: oklch(0.9 0.01 160);
+  --color-input: oklch(0.88 0.012 160);
+  --color-ring: oklch(0.5 0.08 165);
+  --color-card: oklch(1 0 0);
+
+  --radius: 0.625rem;
+}
+
+/*
+ * `dvh`, not `vh`, wherever a full-screen height is wanted.
+ *
+ * A mobile browser's toolbars hide as you scroll, so `100vh` is taller than the
+ * area you can actually see. A form using it puts its submit button below the
+ * fold on a phone, which on the one screen a librarian uses every day is not a
+ * cosmetic problem.
+ */
+@layer base {
+  html,
+  body,
+  #root {
+    min-height: 100dvh;
+  }
+
+  body {
+    background-color: var(--color-paper);
+    color: var(--color-ink);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* A visible focus ring, always. Removing it makes the app unusable by keyboard. */
+  :focus-visible {
+    outline: 2px solid var(--color-ring);
+    outline-offset: 2px;
+  }
+}
+
+@layer components {
+  /*
+   * The wash behind the app.
+   *
+   * Applied to a wrapper rather than to body, because the sign-in screen is
+   * full-bleed and the register is not, and a body background cannot do both.
+   */
+  .page-wash {
+    background-color: var(--color-paper);
+    background-image:
+      radial-gradient(ellipse 80% 60% at 20% 0%, oklch(0.95 0.02 160 / 0.7), transparent),
+      radial-gradient(ellipse 70% 50% at 90% 100%, oklch(0.94 0.03 95 / 0.5), transparent);
+  }
+
+  /*
+   * A number in the register.
+   *
+   * Tabular figures, because the register is a column of codes and dates that
+   * should line up. Proportional digits make admission numbers look ragged and
+   * make a person scan for the wrong one.
+   */
+  .numeric {
+    font-variant-numeric: tabular-nums;
+    font-feature-settings: 'tnum';
+  }
+}
+/*
+ * The sign-in screen's moving line.
+ *
+ * Translate only, and to exactly -50%: the markup contains two identical copies
+ * of the text so the loop has somewhere to go, and any other distance shows a
+ * seam where one copy ends and the other begins.
+ *
+ * Honoured by `motion-reduce` in the component — a permanent animation on a
+ * shared desk is a distraction, and for somebody with a vestibular disorder it is
+ * a reason to close the tab.
+ */
+@keyframes marquee {
+  from {
+    transform: translateX(0);
+  }
+  to {
+    transform: translateX(-50%);
+  }
+}
