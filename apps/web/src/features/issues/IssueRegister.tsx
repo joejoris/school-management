@@ -26,6 +26,7 @@ import { api } from '../../api'
 import { Button, Card, Field, Input, cn } from '../../components/ui'
 import { Search, TriangleAlert } from '../../components/icons'
 import { LoanActions } from './LoanActions'
+import { REGISTER_COLUMNS, download, registerRow, toCsv } from '../../lib/csv'
 
 const date = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { dateStyle: 'medium' }) : '—'
@@ -80,6 +81,48 @@ export function IssueRegister() {
               Overdue only
             </Button>
           </div>
+        </div>
+
+        {/*
+          The register as a file.
+
+          *
+           * A school keeps a paper register, and the head teacher asks for it. At the
+           * end of a term somebody is expected to produce a list of what is out and
+           * what came back. Without this that is either retype it from the screen — which
+           * is how the register and the report drift apart — or photograph the screen,
+           * which nobody does twice.
+           *
+           * Built from the rows already on the page rather than asking the domain again.
+           * An export that fetched a different slice — everything rather than what is
+           * filtered, a fresh ordering — would be a register that did not match the one
+           * on screen, which defeats the purpose.
+           */}
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={rows.length === 0}
+            onClick={() =>
+              download(
+                `register-${filter}-${new Date().toISOString().slice(0, 10)}.csv`,
+                toCsv([...REGISTER_COLUMNS], rows.map(registerRow)),
+              )
+            }
+          >
+            Download these rows
+          </Button>
+
+          {/*
+           * The count beside the button, because "what am I about to download" is the
+           * question. A filter that quietly exported everything is worse than no export,
+           * because it looks like the one on screen.
+           */}
+          <p className="text-xs text-muted-foreground">
+            {rows.length === 0
+              ? 'Nothing to download.'
+              : `${rows.length} ${rows.length === 1 ? 'row' : 'rows'} — the ones on screen`}
+          </p>
         </div>
 
         {/*

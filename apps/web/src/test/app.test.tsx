@@ -17,6 +17,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createRouter, RouterProvider, createMemoryHistory } from '@tanstack/react-router'
 import type { ReactNode } from 'react'
 import { api } from '../api'
+import { csvField, toCsv } from '../lib/csv'
 import { routeTree } from '../routes'
 import { __mock } from '../api'
 
@@ -1374,5 +1375,127 @@ describe('staff and rules', () => {
       expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
       cleanup()
     }
+  })
+})
+
+/*
+ * A damaged book, and the register as a file.
+ *
+ * Two holes closed here. There was no way to take a copy out of circulation, so a
+ * torn cover found on the shelf stayed "available" and was issued to the next
+ * student — and there was no way to get the register out of the screen, so the
+ * version in the head teacher's report was retyped by hand and drifted.
+ */
+describe('taking a book out of circulation', () => {
+  const openCatalogue = async () => {
+    const { user } = await mountSignedIn('/catalogue', () =>
+      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 2 }),
+    )
+    await screen.findByText('Things We Carry')
+    await user.click(screen.getByRole('button', { name: /things we carry/i }))
+    return user
+  }
+
+  test('a damaged copy is marked, and stays lendable', async () => {
+    const user = await openCatalogue()
+    await user.click(screen.getAllByRole('button', { name: /mark damaged/i })[0]!)
+
+    await user.click(screen.getByRole('button', { name: /mark it damaged/i }))
+
+    // Damaged is not withdrawn. A scuffed cover is still lent; taking it off the
+    // shelf behind a button labelled "Damaged" would be unrecoverable from here.
+    const detail = await api.getTitle((await api.searchTitles({ limit: 5, offset: 0 })).items[0]!.id)
+    const marked = detail.copies.filter((c) => c.condition === 'damaged')
+    expect(marked).toHaveLength(1)
+    expect(marked[0]!.status).toBe('on_shelf')
+  })
+
+  test('withdrawing needs a reason, and the copy stops being lendable', async () => {
+    const user = await openCatalogue()
+    await user.click(screen.getAllByRole('button', { name: /^withdraw$/i })[0]!)
+
+    const withdraw = screen.getByRole('button', { name: /withdraw it/i })
+    // A book that vanished with no explanation cannot be chased — the same reason a
+    // void needs one.
+    expect(withdraw).toBeDisabled()
+
+    await user.type(screen.getByLabelText(/reason/i), 'water damage')
+    expect(withdraw).toBeEnabled()
+    await user.click(withdraw)
+
+    const detail = await api.getTitle((await api.searchTitles({ limit: 5, offset: 0 })).items[0]!.id)
+    const gone = detail.copies.filter((c) => c.status === 'withdrawn')
+    expect(gone).toHaveLength(1)
+    expect(gone[0]!.notes).toBe('water damage')
+
+    // And it no longer counts as available.
+    const titles = await api.searchTitles({ limit: 5, offset: 0 })
+    expect(titles.items[0]!.availableCount).toBe(1)
+    expect(titles.items[0]!.copyCount).toBe(2)
+  })
+
+  test('a withdrawn copy can be put back, and comes back undamaged', async () => {
+    const user = await openCatalogue()
+    await user.click(screen.getAllByRole('button', { name: /^withdraw$/i })[0]!)
+    await user.type(screen.getByLabelText(/reason/i), 'repaired')
+    await user.click(screen.getByRole('button', { name: /withdraw it/i }))
+    await screen.findByText(/withdrawn/i)
+
+    await user.click(screen.getAllByRole('button', { name: /put back on the shelf/i })[0]!)
+
+    const detail = await api.getTitle((await api.searchTitles({ limit: 5, offset: 0 })).items[0]!.id)
+    // The condition goes back with it. A copy restored to the shelf while still
+    // marked damaged would show as available and be issued damaged all over again.
+    expect(detail.copies.filter((c) => c.status === 'on_shelf')).toHaveLength(2)
+    expect(detail.copies.every((c) => c.condition === 'good')).toBe(true)
+  })
+})
+
+describe('the register as a file', () => {
+  test('a field is quoted only when it has to be', () => {
+    // Quoting a number makes it arrive in Excel as text, which then refuses to sum.
+    expect(csvField('S001')).toBe('S001')
+    expect(csvField(1500)).toBe('1500')
+    expect(csvField(null)).toBe('')
+    expect(csvField('Things We Carry, Revised')).toBe('"Things We Carry, Revised"')
+    // A quote inside a quoted field is doubled, or it ends the field early.
+    expect(csvField('O"Brien')).toBe('"O""Brien"')
+    expect(csvField('line one\nline two')).toBe('"line one\nline two"')
+  })
+
+  test('rows come out in the order the columns name', () => {
+    const csv = toCsv(['A', 'B'], [['1', '2'], ['3', null]])
+    expect(csv).toBe('A,B\r\n1,2\r\n3,\r\n')
+  })
+
+  test('the export carries the rows on screen, and says how many', async () => {
+    // Mounted once, with the loan arranged beforehand. Mounting twice rendered two
+    // registers, and `getByText` reported the duplicate as a failure rather than as
+    // the mistake it was.
+    const { container } = await mountSignedIn('/register', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+        form: 'Form 4',
+      })
+      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const detail = await api.getTitle(t.id)
+      await api.checkout({ memberCode: 'S001', barcode: detail.copies[0]!.barcode })
+    })
+    await screen.findByRole('heading', { name: /issue register/i })
+    await waitFor(() => expect(container).toHaveTextContent('Kept Student'))
+
+    // The count, because "what am I about to download" is the question. An export
+    // that quietly fetched a different slice would look like the one on screen.
+    expect(screen.getByText(/1 row — the ones on screen/i)).toBeInTheDocument()
+  })
+
+  test('there is nothing to download from an empty view', async () => {
+    await mountSignedIn('/register')
+    await screen.findByRole('heading', { name: /issue register/i })
+    expect(screen.getByRole('button', { name: /download these rows/i })).toBeDisabled()
+    expect(screen.getByText(/nothing to download/i)).toBeInTheDocument()
   })
 })

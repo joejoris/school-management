@@ -30,6 +30,7 @@ import type { TitleSummary } from '@library/contracts'
 import { api } from '../../api'
 import { Button, Card, Field, Input, cn } from '../../components/ui'
 import { BookPlus, Plus, Search, TriangleAlert } from '../../components/icons'
+import { CopyActions } from './CopyActions'
 
 /** How a copy's status reads on the shelf. */
 const STATUS_LABEL: Record<string, string> = {
@@ -233,7 +234,7 @@ function TitleRow({
                 {copies.data?.copies.map((c) => (
                   <li
                     key={c.id}
-                    className="flex items-center justify-between gap-2 rounded-md bg-card px-2.5 py-1.5 text-sm"
+                    className="grid grid-cols-[1fr_auto] items-start gap-x-2 gap-y-1 rounded-md bg-card px-2.5 py-1.5 text-sm"
                   >
                     <span className="numeric font-medium">{c.barcode}</span>
                     <span
@@ -243,7 +244,13 @@ function TitleRow({
                       )}
                     >
                       {STATUS_LABEL[c.status] ?? c.status}
+                      {/* The condition matters even when the copy is lendable: a
+                          scuffed book is still issued, and a librarian looking for
+                          "is this one any good" should not have to open it. */}
+                      {c.condition !== 'good' ? ' · ' + c.condition : ''}
                     </span>
+
+                    <CopyActions copy={c} />
                   </li>
                 ))}
               </ul>
