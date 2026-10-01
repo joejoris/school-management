@@ -63,9 +63,13 @@ beforeEach(() => {
 /**
  * Mount as somebody already at the desk.
  *
- * Creating an account is also what signs you in, so this is one call rather than
- * a setup routine. It is arranged `before` the render rather than through the
- * form, because the form's own behaviour is what the entry-form tests are about.
+ * Two calls, because creating an account and signing in are two different acts.
+ * They used to be one — `createUser` opened a session — and collapsing them meant
+ * the sign-in path was only ever exercised by the first person to open a
+ * brand-new app. Every test below now says plainly which act it is performing.
+ *
+ * Arranged `before` the render rather than through the form, because the form's own
+ * behaviour is what the entry-form tests are about.
  */
 async function mountSignedIn(path = '/') {
   await api.createUser({
@@ -74,6 +78,7 @@ async function mountSignedIn(path = '/') {
     password: 'x',
     role: 'admin',
   })
+  await api.signIn('head@dandorasecondary.go.ke', 'x')
   return mount(path)
 }
 
@@ -108,7 +113,7 @@ describe('the landing screen', () => {
   })
 
   test('an unknown path says so rather than silently landing on the entry form', async () => {
-    mount('/nope')
+    await mountSignedIn('/nope')
     // A stale bookmark that quietly lands on the entry form looks like it worked,
     // and the difference is discovered a week later by the person who clicked it.
     expect(await screen.findByRole('heading', { name: /that page is not here/i })).toBeInTheDocument()
@@ -245,7 +250,8 @@ describe('the gate at /', () => {
 
   test('once an account exists, / offers sign-in and account creation', async () => {
     await api.createUser({ email: 'head@librarian', name: 'H', password: 'x', role: 'admin' })
-    await api.signOut()
+    // Deliberately not signed in: the point is what a signed-out visitor sees when
+    // accounts already exist.
     mount('/')
 
     expect(await screen.findByRole('tab', { name: /sign in/i })).toBeInTheDocument()
@@ -306,5 +312,85 @@ describe('the gate at /', () => {
     expect(screen.getByRole('button', { name: /create the account/i })).toBeDisabled()
     await user.type(password, 'x')
     expect(screen.getByRole('button', { name: /create the account/i })).toBeEnabled()
+  })
+})
+
+/*
+ * The sidebar is not decoration around the sign-in screen.
+ *
+ * It used to wrap everything, which put four navigation links beside a form that
+ * could not use any of them: signed out, the domain refuses every one of those
+ * actions. Every link was a promise the app could not keep.
+ */
+describe('the sidebar belongs to a session, not to the page', () => {
+  test('signed out, there is no navigation at all', async () => {
+    mount('/')
+    await screen.findByText(/no accounts exist yet/i)
+
+    expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
+    // Every one of those links would have been a dead end.
+    for (const label of ['Record issue', 'Register', 'Import', 'Backup']) {
+      expect(screen.queryByRole('link', { name: new RegExp(label, 'i') })).not.toBeInTheDocument()
+    }
+  })
+
+  test('signed out, the only way forward is the form', async () => {
+    mount('/')
+    await screen.findByText(/no accounts exist yet/i)
+    // Nothing on the page is a link at all.
+    expect(screen.queryAllByRole('link')).toHaveLength(0)
+  })
+
+  test('signed in, the navigation appears', async () => {
+    await mountSignedIn('/')
+    expect(await screen.findByRole('navigation', { name: /main/i })).toBeInTheDocument()
+  })
+
+  test('signing out takes the navigation away again', async () => {
+    const { user } = await mountSignedIn('/')
+    await screen.findByRole('navigation', { name: /main/i })
+
+    // Through the button, not by calling the API. Calling \`signOut\` directly left
+    // the cached session in place, so the sidebar stayed on screen offering links
+    // the domain would now refuse — which is the exact state this test exists to
+    // prevent, and it is why the button has to invalidate.
+    await user.click(screen.getByRole('button', { name: /sign out/i }))
+
+    await waitFor(() => expect(screen.queryByRole('navigation')).not.toBeInTheDocument())
+    // And the session really is gone, not merely hidden.
+    expect(await api.currentUser()).toBeNull()
+  })
+})
+
+/*
+ * Creating an account and signing in are two acts.
+ *
+ * Collapsing them gave the domain two doors that open a session instead of one,
+ * and meant the sign-in form was only ever seen by somebody who already knew the
+ * app existed.
+ */
+describe('creating an account leads to sign-in', () => {
+  test('an account is created and then signed in with the same details', async () => {
+    const { user } = mount('/')
+    await screen.findByText(/no accounts exist yet/i)
+
+    await user.type(screen.getByLabelText(/your name/i), 'Head Librarian')
+    await user.type(screen.getByLabelText(/email address/i), 'head@dandorasecondary.go.ke')
+    await user.type(screen.getByLabelText(/^password$/i), 'a-long-enough-password')
+    await user.click(screen.getByRole('button', { name: /create the account/i }))
+
+    // Straight in, using what was just typed — no second round of typing, and no
+    // navigation.
+    expect(await screen.findByRole('heading', { name: /record a book issue/i })).toBeInTheDocument()
+    expect(await api.currentUser()).toMatchObject({ email: 'head@dandorasecondary.go.ke' })
+  })
+
+  test('creating an account on its own does not sign you in', async () => {
+    // The domain-level half of the rule. If this regresses, the UI above would
+    // still work and the separation would be gone.
+    await api.createUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'admin' })
+    expect(await api.currentUser()).toBeNull()
+    await api.signIn('a@librarian', 'x')
+    expect(await api.currentUser()).not.toBeNull()
   })
 })

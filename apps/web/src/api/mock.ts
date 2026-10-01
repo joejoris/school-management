@@ -252,7 +252,19 @@ export class MockApi implements LibraryApi {
       createdAt: this.now(),
     }
     this.db.users.push(user)
-    this.db.sessionUserId = user.id
+    /*
+     * No session is opened here.
+     *
+     * Creating an account is not signing in. They are two different acts by two
+     * different people: the first librarian sets the system up, and the next
+     * librarian to use it signs in with their own account.
+     *
+     * This used to sign the new account straight in, which meant the setup screen
+     * went directly into the application and the sign-in form was only ever seen
+     * by somebody who already knew the app existed. Separating them also means
+     * `signIn` is the only thing that grants a session — one door rather than two,
+     * so there is no way to hold a session that was never signed in through.
+     */
     return user
   }
 

@@ -1,39 +1,50 @@
 /**
  * Routes.
  *
- * ── `/` is the entry form. That is the whole point of it ────────────
+ * ── `/` is the entry form ────────────────────────────────────────────
  *
- * The app opens on the thing a librarian does forty times a day, not on a
- * dashboard summarising things already recorded. There is no `/login` and no
- * `/dashboard`: a librarian who has to navigate before they can record a book
- * will find another way to write it down.
+ * The librarian opens this at 7am and their job is to record that a student took
+ * a book. Everything else — the register, import, backup — is something they do
+ * less often, so the app opens on the thing that needs doing rather than on a
+ * summary of things already done.
  *
- * `path: '/'` has no `beforeLoad` that navigates. That was tried and it loops:
- * the router resolves `/`, the loader redirects to `/`, the loader runs again.
- * It presents as a blank screen, which is the most expensive symptom a router
- * bug can have and the least informative.
+ * There is no dashboard and no `/login`.
+ *
+ * The dashboard because a panel of counts pushes the admission number off a phone
+ * screen, and a librarian serving a queue does not need to be told how many books
+ * are out. The `/login` because signed out there is nothing to navigate to — the
+ * gate in `AuthLayout` renders the panel instead of this outlet, so a login route
+ * could only ever be reached by a redirect, and every redirect is a chance to loop,
+ * to lose the intended path, or to leave a blank screen with no error.
  *
  * ── The catch-all ──────────────────────────────────────────────────
  *
  * Old links and a mistyped path land on a screen that says so and offers the way
- * back, rather than on the entry form. Silently redirecting an unknown path to
- * `/` would mean a stale bookmark looks like it worked, and the librarian
- * discovers the difference later when the thing they clicked did not happen.
+ * back. Silently redirecting to `/` would make a stale bookmark look like it
+ * worked, and the difference surfaces a week later when the thing they clicked did
+ * not happen.
  */
 import { createRootRoute, createRoute, createRouter, Link } from '@tanstack/react-router'
-import { Shell } from './shell'
-import { EntryOrSetup } from './features/auth/EntryOrSetup'
+import { AuthLayout } from './features/auth/AuthLayout'
+import { RecordIssue } from './features/issues/RecordIssue'
 import { IssueRegister } from './features/issues/IssueRegister'
 import { ImportStudents } from './features/issues/ImportStudents'
 import { BackupPanel } from './features/issues/BackupPanel'
 import { Button } from './components/ui'
 
-const rootRoute = createRootRoute({ component: Shell })
+/*
+ * The gate, not the chrome.
+ *
+ * `AuthLayout` renders the sidebar and the outlet only for somebody signed in.
+ * That ordering is the whole reason signed-out looks like a sign-in screen rather
+ * than an application with a sign-in form in it.
+ */
+const rootRoute = createRootRoute({ component: AuthLayout })
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/',
-  component: EntryOrSetup,
+  component: RecordIssue,
 })
 
 const registerRoute = createRoute({
@@ -80,8 +91,8 @@ const notFoundRoute = createRoute({
 /**
  * Exported so a test can build a router against the real tree.
  *
- * A test that mounts its own copy of the routes is testing a copy. The routes
- * array being asserted on has to be the one the app ships.
+ * A test that mounts its own copy of the routes is testing a copy. The array
+ * being asserted on has to be the one the app ships.
  */
 export const routeTree = rootRoute.addChildren([
   indexRoute,

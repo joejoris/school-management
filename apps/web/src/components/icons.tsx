@@ -107,6 +107,15 @@ export function LogIn({ className, ...p }: IconProps) {
   )
 }
 
+export function LogOut({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
+      <path d="M9 3H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h4" />
+      <path d="m16 17 5-5-5-5M21 12H9" />
+    </svg>
+  )
+}
+
 export function UserPlus({ className, ...p }: IconProps) {
   return (
     <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>

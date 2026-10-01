@@ -31,7 +31,12 @@ let admin: string
 beforeEach(async () => {
   api.reset()
   clock.at = NOW
+  // Creating an account no longer opens a session, so signing in is a second,
+  // separate act. Every test below assumes somebody is at the desk, and this is
+  // where that assumption is established — visibly, rather than as a side effect
+  // of creating a user.
   const u = await api.createUser({ email: 'head@librarian', name: 'Head', password: 'x', role: 'admin' })
+  await api.signIn('head@librarian', 'x')
   admin = u.id
 })
 
@@ -615,6 +620,9 @@ describe('permissions', () => {
     api.reset()
     const first = await api.createUser({ email: 'first@librarian', name: 'F', password: 'x', role: 'assistant' })
     assert.equal(first.role, 'admin')
+    // And creating it grants nothing on its own. `admin` is a fact about the
+    // account, not a session somebody now holds.
+    assert.equal(await api.currentUser(), null)
   })
 
   test('an override is cleared after a refusal, not left behind', async () => {
@@ -627,18 +635,16 @@ describe('permissions', () => {
     // symptom would be a rule quietly ceasing to be enforced.
     await assert.rejects(() => api.asUser(a.id, () => api.updateMemberType('student', { borrowLimit: 1 })))
 
-    // Creating an account signs you in as it, so the session is now the assistant.
-    // That is the proof the override did not stick: the caller is the *session*,
-    // and the session is an assistant — not a leftover override that happens to
-    // agree. An earlier version of this test expected the head librarian here and
-    // failed, which is what showed the two.
-    await assert.rejects(() => api.getSettings(), /assistant/i)
-
-    // Signing back in restores the full set, so the earlier refusal was about the
-    // assistant and not about some permanent damage.
-    await api.signIn('head@librarian', 'x')
+    // The session is untouched by `asUser`, and it is still the head librarian,
+    // so the full set is available. That is the proof the override did not stick:
+    // a leftover assistant would have refused this.
     const settings = await api.getSettings()
     assert.ok(settings.some((s) => s.key === 'school.name'))
+
+    // And signing in as the assistant really does refuse it — so the refusal above
+    // was about the role and not about some permanent damage.
+    await api.signIn('a@librarian', 'x')
+    await assert.rejects(() => api.getSettings(), /assistant/i)
 
     // And signed out entirely, everything is refused again — so the override was
     // cleared rather than replaced by another one.

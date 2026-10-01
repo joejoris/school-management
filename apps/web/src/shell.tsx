@@ -19,10 +19,10 @@
  */
 import { useState } from 'react'
 import { Link, Outlet, useRouterState } from '@tanstack/react-router'
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { cn } from './components/ui'
-import { Archive, BookPlus, PanelLeft, SchoolLogo, TableIcon, Upload } from './components/icons'
+import { Archive, BookPlus, LogOut, PanelLeft, SchoolLogo, TableIcon, Upload } from './components/icons'
 
 const LINKS = [
   { to: '/', label: 'Record issue', icon: BookPlus, end: true },
@@ -33,6 +33,19 @@ const LINKS = [
 
 function Rail() {
   const path = useRouterState({ select: (s) => s.location.pathname })
+  const queryClient = useQueryClient()
+
+  /*
+   * Sign out, then invalidate the session.
+   *
+   * The invalidate is the part that matters. The session query is cached for 30s, so
+   * without it the gate would keep rendering the sidebar for another half minute
+   * after signing out — every link on it pointing at actions the domain now refuses.
+   */
+  const signOut = async () => {
+    await api.signOut()
+    await queryClient.invalidateQueries({ queryKey: ['session'] })
+  }
   const [pinned, setPinned] = useState(false)
   const [hovered, setHovered] = useState(false)
   const open = pinned || hovered
@@ -113,13 +126,39 @@ function Rail() {
           })}
         </ul>
 
-        <div className="flex items-center gap-3 border-t border-border px-3 py-3">
-          <SchoolLogo size={32} className="shrink-0" />
-          <span className={cn('min-w-0 text-xs leading-tight', !open && 'hidden lg:inline')}>
-            Dandora Secondary
-            <br />
-            School Library
-          </span>
+        {/*
+          The footer, and the only way out.
+
+          Signing out is not a nicety on a shared desk. This app will be used at a
+          counter where the next person is already standing there, and without this
+          the librarian who finishes a shift leaves their session open — and the
+          next person records borrowings under their name.
+
+          The button lives here rather than on the entry form because the entry form
+          is for one task: recording a book. Anything else on it competes with the
+          admission number field for a librarian's attention.
+        */}
+        <div className="border-t border-border p-2">
+          <div className="mb-1 flex items-center gap-3 px-2 py-1">
+            <SchoolLogo size={28} className="shrink-0" />
+            <span className={cn('min-w-0 text-xs leading-tight', !open && 'hidden lg:inline')}>
+              Dandora Secondary
+              <br />
+              School Library
+            </span>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => void signOut()}
+            className={cn(
+              'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium',
+              'text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground',
+            )}
+          >
+            <LogOut className="size-4 shrink-0" />
+            <span className={cn('truncate', !open && 'hidden lg:inline')}>Sign out</span>
+          </button>
         </div>
       </nav>
     </>

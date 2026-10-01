@@ -33,7 +33,8 @@ import { dirname, join } from 'node:path'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const ROUTES = join(root, 'apps/web/src/routes.tsx')
 const FORM = join(root, 'apps/web/src/features/issues/RecordIssue.tsx')
-const GATE = join(root, 'apps/web/src/features/auth/EntryOrSetup.tsx')
+const GATE = join(root, 'apps/web/src/features/auth/AuthLayout.tsx')
+const SHELL = join(root, 'apps/web/src/shell.tsx')
 
 /**
  * Run the suite by invoking the installed vitest entry point with this node.
@@ -101,26 +102,27 @@ const BREAKS = [
      */
     file: ROUTES,
     from: `  path: '/',
-  component: EntryOrSetup,`,
+  component: RecordIssue,`,
     to: `  path: '/',
   beforeLoad: () => {
     throw new Error('redirect to /')
   },
-  component: EntryOrSetup,`,
+  component: RecordIssue,`,
     mustFail: '/ is the entry form, and it is rendered there directly',
   },
   {
     what: 'a dashboard is put back in front of the entry form',
     file: GATE,
-    from: `  if (session.data) return <RecordIssue />`,
-    to: `  if (session.data) {
-    return (
-      <div>
-        <h1>Books on loan</h1>
-        <RecordIssue />
-      </div>
-    )
-  }`,
+    file: ROUTES,
+    from: `  path: '/',
+  component: RecordIssue,`,
+    to: `  path: '/',
+  component: () => (
+    <div>
+      <h1>Books on loan</h1>
+      <RecordIssue />
+    </div>
+  ),`,
     mustFail: 'there is no dashboard in front of the entry form',
   },
   {
@@ -157,6 +159,26 @@ const BREAKS = [
       setDraft(emptyDraft())
       setError(e instanceof Error ? e.message : 'Could not record that.')`,
     mustFail: 'a failed record keeps what was typed',
+  },
+  {
+    /*
+     * The gate is moved below the chrome, which is the same defect as the one
+     * above in a different place: the sidebar would wrap the sign-in screen again,
+     * and every link on it would be a promise the domain refuses while signed out.
+     */
+    what: 'the sidebar is rendered even when nobody is signed in',
+    file: GATE,
+    from: `    return <SetupPanel firstRun={accounts.data !== true} onSignedIn={onSignedIn} />`,
+    to: `    return <Shell />`,
+    mustFail: 'signed out, there is no navigation at all',
+  },
+  {
+    what: 'creating an account signs you in without going through sign-in',
+    file: join(root, 'apps/web/src/features/auth/SetupPanel.tsx'),
+    from: `        await api.signIn(address, password)
+        return`,
+    to: `        return`,
+    mustFail: 'an account is created and then signed in with the same details',
   },
   {
     what: 'the submit button is enabled with an empty form',

@@ -13,6 +13,21 @@
  * the others, and letting the first sign-up pick its own role would let the
  * school lock itself out of its own register.
  *
+ * ── Creating an account does not sign you in ───────────────────────
+ *
+ * It goes to the sign-in form instead, with the address already filled in and the
+ * same password, and signs in.
+ *
+ * Creating an account and signing in are different acts, and conflating them had
+ * two costs. The setup screen went straight into the application, so the sign-in
+ * form was only ever seen by somebody who already knew the app existed — it was
+ * decoration rather than a working path. And it gave the domain two doors that
+ * open a session instead of one, which is how a session ends up existing that was
+ * never signed in through.
+ *
+ * The address carries across so it is not retyped. The password is used, not
+ * shown: a field prefilled with a password is a password on a shoulder.
+ *
  * ── What this screen deliberately does not do ───────────────────────
  *
  * It does not offer a "forgot password" link. There is no mail server behind
@@ -41,19 +56,34 @@ export function SetupPanel({
   const [email, setEmail] = useState('')
   const [name, setName] = useState('')
   const [password, setPassword] = useState('')
+  /*
+   * Set when an account has just been created and the sign-in is pending.
+   *
+   * Rendered as a short "Signing you in…" state rather than as a form with
+   * disabled fields, because the person who just pressed the button is not asking
+   * to sign in — they are waiting to get in. Making them watch a form fill in
+   * before it works turns one action into two.
+   */
+  const [pendingSignIn, setPendingSignIn] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
 
   const go = useMutation({
     mutationFn: async () => {
+      const address = email.trim()
       if (tab === 'signup') {
-        await api.createUser({ email: email.trim(), name: name.trim(), password, role: 'assistant' })
-      } else {
-        await api.signIn(email.trim(), password)
+        await api.createUser({ email: address, name: name.trim(), password, role: 'assistant' })
+        // Then sign in, with exactly what was just typed. `createUser` opens no
+        // session, so this is a real sign-in through the same path every other
+        // sign-in takes - not a back door.
+        await api.signIn(address, password)
+        return
       }
+      await api.signIn(address, password)
     },
     onSuccess: () => void onSignedIn(),
     onError: (e: unknown) => {
+      setPendingSignIn(false)
       setError(e instanceof Error ? e.message : 'That did not work.')
     },
   })
@@ -62,7 +92,11 @@ export function SetupPanel({
   const needsName = tab === 'signup'
 
   return (
-    <div className="page-wash mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-10">
+  // A <main> landmark, so this page is reachable by landmark navigation and a
+  // screen reader can skip the crest and the heading to reach the form. Signed
+  // out this page has no sidebar around it, so without one there is no main region
+  // at all - the whole document would be unlabelled sections.
+  <main className="page-wash mx-auto flex min-h-dvh w-full max-w-md flex-col justify-center px-4 py-10">
       <div className="flex flex-col items-center gap-3 text-center">
         <SchoolLogo size={72} />
         <h1 className="text-xl font-semibold tracking-tight">Welcome to Dandora Secondary School</h1>
@@ -90,7 +124,8 @@ export function SetupPanel({
           <div className="border-b border-border px-6 py-4">
             <h2 className="font-medium">Set up the library</h2>
             <p className="mt-1 text-sm text-muted-foreground">
-              No accounts exist yet. The first one you create looks after the system.
+              No accounts exist yet. Create one to look after the library, then sign in
+              with it.
             </p>
           </div>
         )}
@@ -100,9 +135,18 @@ export function SetupPanel({
           onSubmit={(e) => {
             e.preventDefault()
             setError(null)
+            // Signing in straight after creating the account, rather than showing
+            // the form for a moment and filling it in visibly.
+            if (tab === 'signup') setPendingSignIn(true)
             go.mutate()
           }}
         >
+          {pendingSignIn ? (
+            <p role="status" className="py-4 text-center text-sm text-muted-foreground">
+              Account created. Signing you in…
+            </p>
+          ) : (
+            <>
           {needsName ? (
             <Field label="Your name" htmlFor="name">
               <Input
@@ -166,17 +210,24 @@ export function SetupPanel({
             </p>
           ) : null}
 
-          <Button type="submit" disabled={!canSubmit || go.isPending} size="lg" className={cn('w-full')}>
+          <Button
+            type="submit"
+            disabled={!canSubmit || go.isPending || pendingSignIn}
+            size="lg"
+            className={cn('w-full')}
+          >
             {needsName ? <UserPlus /> : <LockKeyhole />}
             {go.isPending ? 'Working…' : needsName ? 'Create the account' : 'Sign in'}
           </Button>
+            </>
+          )}
         </form>
       </Card>
 
       <p className="mt-6 text-center text-xs text-muted-foreground">
         Students do not need accounts. Only the staff who run the library sign in.
       </p>
-    </div>
+    </main>
   )
 }
 
@@ -236,10 +287,3 @@ function Marquee() {
   )
 }
 
-/** One animation, defined once, for the marquee above. */
-const style = document.createElement('style')
-style.textContent = '@keyframes marquee{from{transform:translateX(0)}to{transform:translateX(-50%)}}'
-if (typeof document !== 'undefined' && !document.getElementById('marquee-keyframes')) {
-  style.id = 'marquee-keyframes'
-  document.head.appendChild(style)
-}
