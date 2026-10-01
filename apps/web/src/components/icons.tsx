@@ -43,6 +43,26 @@ export function Library({ className, ...p }: IconProps) {
   )
 }
 
+export function Users({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M16 5.2a3.5 3.5 0 0 1 0 6.6M17.5 14.4A6.5 6.5 0 0 1 21.5 20" />
+    </svg>
+  )
+}
+
+/** A receipt, for money owed. Reads as "a bill" rather than "a coin". */
+export function Receipt({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <path d="M5 3h14v18l-2.5-1.5L14 21l-2-1.5L10 21l-2.5-1.5L5 21Z" />
+      <path d="M9 8h6M9 12h6" />
+    </svg>
+  )
+}
+
 export function TableIcon({ className, ...p }: IconProps) {
   return (
     <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>

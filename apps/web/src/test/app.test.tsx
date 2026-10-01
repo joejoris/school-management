@@ -11,7 +11,7 @@
  * mocked API, because the whole point is to check that those three fit together.
  */
 import { describe, test, expect, beforeEach } from 'vitest'
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { cleanup, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { createRouter, RouterProvider, createMemoryHistory } from '@tanstack/react-router'
@@ -72,12 +72,23 @@ beforeEach(() => {
  * behaviour is what the entry-form tests are about.
  */
 async function mountSignedIn(path = '/', arrange?: () => Promise<unknown>) {
-  await api.createUser({
-    email: 'head@dandorasecondary.go.ke',
-    name: 'Head Librarian',
-    password: 'x',
-    role: 'admin',
-  })
+  /*
+   * Create the account only if it is not already there.
+   *
+   * This helper used to call `createUser` unconditionally, which is fine for one
+   * mount per test and fails on the second — "There is already an account with that
+   * email address" — so a test that wanted to walk several destinations could not.
+   * Signing in when the account exists is the same arrangement from the screen's
+   * point of view and makes the helper safe to call twice.
+   */
+  if (!(await api.hasAccounts())) {
+    await api.createUser({
+      email: 'head@dandorasecondary.go.ke',
+      name: 'Head Librarian',
+      password: 'x',
+      role: 'admin',
+    })
+  }
   await api.signIn('head@dandorasecondary.go.ke', 'x')
   // `arrange` runs after signing in and before the first render, so a test that
   // needs a student on file gets a component whose very first paint already knows
@@ -1021,5 +1032,177 @@ describe('circulation at the desk', () => {
 
     await user.click(desk().getByRole('button', { name: /^renew$/i }))
     expect(await screen.findByRole('alert')).toHaveTextContent(/renewed as many times/i)
+  })
+})
+
+/*
+ * Fines, and the student behind them.
+ *
+ * Until now a refusal said "that student owes more than they are allowed to owe" and
+ * there was nowhere to go. The sentence is right; being unable to act on it is not.
+ */
+describe('fines at the desk', () => {
+  /**
+   * A student with one overdue book, lent far enough in the past that the grace
+   * period has passed.
+   */
+  async function overdue() {
+    await api.createMember({
+      memberCode: 'S001',
+      firstName: 'Kept',
+      lastName: 'Student',
+      type: 'student',
+      form: 'Form 4',
+    })
+    const title = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+    const detail = await api.getTitle(title.id)
+    await api.checkout({
+      memberCode: 'S001',
+      barcode: detail.copies[0]!.barcode,
+      checkedOutAt: '2026-07-01T08:00:00.000Z',
+      dueAt: '2026-07-15T08:00:00.000Z',
+    })
+    await api.runAccrual('2026-09-20T08:00:00.000Z')
+  }
+
+  test('nothing owing is said plainly, not shown as an empty table', async () => {
+    await mountSignedIn('/fines')
+    // The normal state on most days. An empty grid of rows would read as a failure
+    // to load rather than as an answer.
+    expect(await screen.findByText(/nobody owes anything/i)).toBeInTheDocument()
+  })
+
+  test('charging twice on the same day says it charged nothing the second time', async () => {
+    await mountSignedIn('/fines', overdue)
+    await screen.findByRole('heading', { name: /^fines$/i })
+
+    await userEvent.setup().click(screen.getByRole('button', { name: /charge overdue fines/i }))
+    expect(await screen.findByText(/charged 1 loan/i)).toBeInTheDocument()
+
+    // Idempotent per loan per day, and the screen says so rather than hiding it.
+    await userEvent.setup().click(screen.getByRole('button', { name: /charge overdue fines/i }))
+    expect(await screen.findByText(/nothing was charged/i)).toBeInTheDocument()
+  })
+
+  test('a fine shows against the student, in shillings', async () => {
+    const { container } = await mountSignedIn('/fines', overdue)
+    // Stored as integer cents, shown as money. 25 cents is KSh 0.25, and showing
+    // "25" would be wrong by two orders of magnitude.
+    //
+    // Asserted against the container rather than with getByText: the amount appears
+    // twice on the card — in the detail line and as the figure — and the name spans
+    // three text nodes. `toHaveTextContent` matches across element boundaries,
+    // which is what "does this screen say this" actually means.
+    await waitFor(() => expect(container).toHaveTextContent('Kept Student'))
+    expect(container).toHaveTextContent('0.25')
+  })
+
+  test('the balance is visible on the student list, before opening anybody', async () => {
+    await mountSignedIn('/students', overdue)
+    // Because "at their limit" and "owes money" are different refusals, and being
+    // able to tell them apart from the list is the difference between knowing and
+    // going to look.
+    expect(await screen.findByText(/0\.25 owing/i)).toBeInTheDocument()
+  })
+
+  test('a student can be found by name as well as by number', async () => {
+    const { user, container } = await mountSignedIn('/students', overdue)
+    await waitFor(() => expect(container).toHaveTextContent('0.25 owing'))
+    // "0.25 owing" rather than the raw cents, because that is what is on screen.
+
+    await user.type(screen.getByLabelText(/^search$/i), 'Kept')
+    await waitFor(() => expect(container).toHaveTextContent('Kept Student'))
+
+    await user.clear(screen.getByLabelText(/^search$/i))
+    await user.type(screen.getByLabelText(/^search$/i), 'S001')
+    await waitFor(() => expect(container).toHaveTextContent('S001'))
+  })
+
+  test('money can be taken, and the balance falls', async () => {
+    const { user, container } = await mountSignedIn('/students', overdue)
+    await screen.findByText(/0\.25 owing/i)
+
+    await user.click(screen.getByRole('button', { name: /s001/i }))
+    const pay = await screen.findByLabelText(/take payment/i)
+
+    // The button stays shut until there is an amount, and the amount has to be a
+    // number — otherwise "KSh 0" is one press away.
+    const take = screen.getByRole('button', { name: /take the money/i })
+    expect(take).toBeDisabled()
+
+    await user.type(pay, '0.10')
+    expect(take).toBeEnabled()
+
+    // `container` comes from the render, not from `screen` — `screen` is a query
+    // helper and has no node on it.
+    await user.click(take)
+
+    // 25c - 10c. The number is in a node of its own and the word beside it in
+    // another, so this is matched across the boundary rather than by element.
+    await waitFor(() => expect(container).toHaveTextContent('0.15 outstanding'))
+  })
+
+  test('a waiver needs a reason and refuses without one', async () => {
+    const { user } = await mountSignedIn('/students', overdue)
+    await screen.findByText(/0\.25 owing/i)
+
+    await user.click(screen.getByRole('button', { name: /s001/i }))
+    await screen.findByText(/outstanding/i)
+
+    const waive = screen.getByRole('button', { name: /waive the balance/i })
+    // A fine that vanishes with no explanation is the thing auditors look for, and
+    // the reason it vanished is the whole reason the ledger is append-only.
+    expect(waive).toBeDisabled()
+
+    await user.type(screen.getByLabelText(/or waive it/i), 'school responsibility')
+    expect(waive).toBeEnabled()
+    await user.click(waive)
+
+    /*
+     * Two of them, and that is right: the search result on the left and the open
+     * record on the right both say it. `getByText` would call that a failure, which
+     * is the right instinct for a name that should appear once and the wrong one
+     * here — so the assertion is that both agree.
+     */
+    await waitFor(() => expect(screen.getAllByText(/nothing owing/i).length).toBeGreaterThanOrEqual(1))
+    expect(screen.getAllByText(/nothing owing/i)).toHaveLength(2)
+  })
+
+  test('a suspended student can be allowed back, without an administrator', async () => {
+    const { user } = await mountSignedIn('/students', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+        status: 'suspended',
+      })
+    })
+    await screen.findByText(/suspended/i)
+
+    await user.click(screen.getByRole('button', { name: /s001/i }))
+    await user.click(screen.getByRole('button', { name: /allow borrowing again/i }))
+
+    // One step and reversible: this is a school, records get entered wrongly, and a
+    // rule that needs an administrator to undo is a rule that does not get used.
+    await waitFor(() => expect(screen.queryByText(/suspended/i)).not.toBeInTheDocument())
+  })
+
+  test('every destination in the rail has a screen behind it', async () => {
+    for (const [path, heading] of [
+      ['/', /record a book issue/i],
+      ['/register', /issue register/i],
+      ['/catalogue', /^catalogue$/i],
+      ['/students', /^students$/i],
+      ['/fines', /^fines$/i],
+      ['/import', /^import students$/i],
+      ['/backup', /^backup$/i],
+    ] as const) {
+      await mountSignedIn(path)
+      expect(
+        await screen.findByRole('heading', { name: heading }),
+      ).toBeInTheDocument()
+      cleanup()
+    }
   })
 })

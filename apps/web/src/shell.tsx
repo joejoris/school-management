@@ -22,7 +22,18 @@ import { Link, Outlet, useRouterState } from '@tanstack/react-router'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from './api'
 import { cn } from './components/ui'
-import { Archive, BookPlus, Library, LogOut, PanelLeft, SchoolLogo, TableIcon, Upload } from './components/icons'
+import {
+  Archive,
+  BookPlus,
+  Library,
+  LogOut,
+  PanelLeft,
+  Receipt,
+  SchoolLogo,
+  TableIcon,
+  Upload,
+  Users,
+} from './components/icons'
 
 const LINKS = [
   { to: '/', label: 'Record issue', icon: BookPlus, end: true },
@@ -30,6 +41,8 @@ const LINKS = [
   // Catalogue sits second, not last: without a book on the shelf nothing else in
   // this app can be tried, so it is the next thing anybody needs.
   { to: '/catalogue', label: 'Catalogue', icon: Library, end: false },
+  { to: '/students', label: 'Students', icon: Users, end: false },
+  { to: '/fines', label: 'Fines', icon: Receipt, end: false },
   { to: '/import', label: 'Import', icon: Upload, end: false },
   { to: '/backup', label: 'Backup', icon: Archive, end: false },
 ] as const

@@ -28,7 +28,9 @@ import { createRootRoute, createRoute, createRouter, Link } from '@tanstack/reac
 import { AuthLayout } from './features/auth/AuthLayout'
 import { RecordIssue } from './features/issues/RecordIssue'
 import { Catalogue } from './features/issues/Catalogue'
+import { Fines } from './features/issues/Fines'
 import { IssueRegister } from './features/issues/IssueRegister'
+import { Students } from './features/issues/Students'
 import { ImportStudents } from './features/issues/ImportStudents'
 import { BackupPanel } from './features/issues/BackupPanel'
 import { Button } from './components/ui'
@@ -52,6 +54,18 @@ const catalogueRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/catalogue',
   component: Catalogue,
+})
+
+const studentsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/students',
+  component: Students,
+})
+
+const finesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/fines',
+  component: Fines,
 })
 
 const registerRoute = createRoute({
@@ -104,6 +118,8 @@ const notFoundRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   catalogueRoute,
+  studentsRoute,
+  finesRoute,
   registerRoute,
   importRoute,
   backupRoute,
