@@ -20,3 +20,16 @@ npm-debug.log*
 
 # A local database file, if one is ever used for development.
 data/
+
+# A GitHub token, if one is ever saved here while using tools/upload.mjs.
+#
+# This is a backstop, not the plan: tools/upload.mjs reads the token from a path
+# you choose and never from the command line, so it should never land in the
+# repository. It is here because a public repo is exactly where a leaked token
+# must never be, and the cost of forgetting is very high while the cost of this
+# line is zero.
+token.txt
+tokens.txt
+*.token
+github_pat_*
+ghp_*
