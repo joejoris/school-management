@@ -30,6 +30,7 @@ import {
   PanelLeft,
   Receipt,
   SchoolLogo,
+  Sliders,
   TableIcon,
   Upload,
   Users,
@@ -43,6 +44,8 @@ const LINKS = [
   { to: '/catalogue', label: 'Catalogue', icon: Library, end: false },
   { to: '/students', label: 'Students', icon: Users, end: false },
   { to: '/fines', label: 'Fines', icon: Receipt, end: false },
+  { to: '/policy', label: 'Rules', icon: Sliders, end: false },
+  { to: '/staff', label: 'Staff', icon: Users, end: false },
   { to: '/import', label: 'Import', icon: Upload, end: false },
   { to: '/backup', label: 'Backup', icon: Archive, end: false },
 ] as const

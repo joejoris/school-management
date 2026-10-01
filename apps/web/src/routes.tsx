@@ -29,6 +29,8 @@ import { AuthLayout } from './features/auth/AuthLayout'
 import { RecordIssue } from './features/issues/RecordIssue'
 import { Catalogue } from './features/issues/Catalogue'
 import { Fines } from './features/issues/Fines'
+import { Policy } from './features/issues/Policy'
+import { Staff } from './features/issues/Staff'
 import { IssueRegister } from './features/issues/IssueRegister'
 import { Students } from './features/issues/Students'
 import { ImportStudents } from './features/issues/ImportStudents'
@@ -66,6 +68,18 @@ const finesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: '/fines',
   component: Fines,
+})
+
+const staffRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/staff',
+  component: Staff,
+})
+
+const policyRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/policy',
+  component: Policy,
 })
 
 const registerRoute = createRoute({
@@ -118,6 +132,8 @@ const notFoundRoute = createRoute({
 export const routeTree = rootRoute.addChildren([
   indexRoute,
   catalogueRoute,
+  staffRoute,
+  policyRoute,
   studentsRoute,
   finesRoute,
   registerRoute,

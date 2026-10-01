@@ -38,7 +38,7 @@ import type {
   TitleSummary,
   User,
 } from './entities.ts'
-import type { CopyCondition, CopyStatus, MemberStatus, Role } from './enums.ts'
+import type { CopyCondition, CopyStatus, MemberStatus, Role, UserStatus } from './enums.ts'
 import type { CheckoutResult, RenewResult, ReturnResult } from './refusals.ts'
 import type { Page, PageQuery } from './page.ts'
 
@@ -245,6 +245,27 @@ export interface LibraryApi {
   hasAccounts(): Promise<boolean>
 
   listUsers(): Promise<User[]>
+
+  /**
+   * Switches an account on or off.
+   *
+   * Off means refused everywhere, immediately, not at the next sign-in: the reason
+   * for disabling somebody is usually happening right now.
+   *
+   * Cannot be used on your own account. An administrator who switches themselves off
+   * has locked the school out of its own register with no way back in, and the
+   * recovery is editing the database — so it is refused at the domain rather than
+   * explained in the interface.
+   */
+  setUserStatus(id: string, status: UserStatus): Promise<User>
+
+  /**
+   * Changes an account's role.
+   *
+   * Also cannot be your own. An administrator demoting themselves leaves nobody able
+   * to create the replacement.
+   */
+  setUserRole(id: string, role: Role): Promise<User>
 
   // ── Catalog ────────────────────────────────────────────────
   searchTitles(query: TitleQuery): Promise<Page<TitleSummary>>

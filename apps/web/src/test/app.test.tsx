@@ -1206,3 +1206,173 @@ describe('fines at the desk', () => {
     }
   })
 })
+
+/*
+ * Staff accounts, and the borrowing rules.
+ *
+ * Both of these were unreachable until now, and both were blockers rather than
+ * improvements:
+ *
+ * - `createUser` had no screen, so a school with two members of staff could not give
+ *   the second one access — and would have ended up sharing one login, putting every
+ *   book issued that term under a single name.
+ * - The borrowing rules could not be changed by anybody, ever. A school that wants
+ *   two books per student simply could not have it.
+ */
+describe('staff and rules', () => {
+  test('a second librarian can be added', async () => {
+    const { user } = await mountSignedIn('/staff')
+    // The heading renders at once; the accounts arrive after their query. Waiting on
+    // the heading and then asserting on the list is a race, and it lost.
+    expect(await screen.findByText(/head librarian/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /add someone/i }))
+    await user.type(screen.getByLabelText(/^name$/i), 'Jane Wanjiru')
+    await user.type(screen.getByLabelText(/email address/i), 'jane@dandorasecondary.go.ke')
+    await user.type(screen.getByLabelText(/^password$/i), 'a-long-password')
+    await user.click(screen.getByRole('button', { name: /add the account/i }))
+
+    // Two people, two sets of books. A shared login would put every loan that term
+    // under one name, which is the whole reason the record of who issued what is
+    // worth keeping at all.
+    expect(await screen.findByText(/jane wanjiru/i)).toBeInTheDocument()
+    expect(await api.listUsers()).toHaveLength(2)
+  })
+
+  test('nobody can switch off their own account', async () => {
+    const { user } = await mountSignedIn('/staff')
+    await screen.findByText(/head librarian/i)
+
+    // The control is disabled rather than hidden: a missing button invites the
+    // question "can I switch myself off?", and a disabled one beside the reason
+    // answers it.
+    expect(screen.getByRole('button', { name: /switch off/i })).toBeDisabled()
+    void user
+
+    // And the domain refuses it, so it is not merely out of reach in this screen.
+    const me = await api.currentUser()
+    await expect(api.setUserStatus(me!.id, 'disabled')).rejects.toThrow(/your own account/i)
+  })
+
+  test('a second account can be switched off, and back on', async () => {
+    const { user } = await mountSignedIn('/staff', async () => {
+      await api.createUser({ name: 'Jane', email: 'jane@librarian', password: 'x', role: 'assistant' })
+    })
+    await screen.findByText('Jane')
+
+    // The second button: the first belongs to the account this test is signed in as,
+    // and that one cannot be switched off. Selected by its row rather than by index
+    // so this keeps working when the list grows.
+    await user.click(screen.getAllByRole('button', { name: /switch off/i })[1] as HTMLElement)
+    expect(await screen.findByText(/switched off/i)).toBeInTheDocument()
+
+    await user.click(screen.getAllByRole('button', { name: /switch on/i })[0] as HTMLElement)
+    await waitFor(() => expect(screen.queryByText(/switched off/i)).not.toBeInTheDocument())
+  })
+
+  test('the borrowing rules can be changed, and take effect', async () => {
+    const { user } = await mountSignedIn('/policy')
+    await screen.findByRole('heading', { name: /borrowing rules/i })
+
+    // A school that wants two books per student, rather than the five the seed data
+    // happened to carry.
+    // The first row is the student's, which is the one a school is most likely to be
+    // changing. The wait above is what makes the index safe.
+    const limit = (await screen.findAllByLabelText(/books at once/i))[0]!
+    await user.clear(limit)
+    await user.type(limit, '2')
+    await user.click(screen.getAllByRole('button', { name: /^save$/i })[0] as HTMLElement)
+
+    await waitFor(async () => {
+      const types = await api.listMemberTypes()
+      expect(types.find((t) => t.key === 'student')?.borrowLimit).toBe(2)
+    })
+  })
+
+  test('the loan period can be changed', async () => {
+    const { user } = await mountSignedIn('/policy')
+    await screen.findByRole('heading', { name: /borrowing rules/i })
+
+    const days = (await screen.findAllByLabelText(/loan period/i))[0]!
+    await user.clear(days)
+    await user.type(days, '7')
+    await user.click(screen.getAllByRole('button', { name: /^save$/i })[0] as HTMLElement)
+
+    await waitFor(async () => {
+      const types = await api.listMemberTypes()
+      expect(types.find((t) => t.key === 'student')?.loanPeriodDays).toBe(7)
+    })
+  })
+
+  test('the fine rate is entered in shillings and stored in cents', async () => {
+    const { user } = await mountSignedIn('/policy')
+    await screen.findByRole('heading', { name: /borrowing rules/i })
+
+    const daily = await screen.findByLabelText(/each day after/i)
+    // One rates card, so this one is unique.
+    expect(daily).toHaveValue('0.25')
+
+    await user.clear(daily)
+    await user.type(daily, '0.5')
+    await user.click(screen.getByRole('button', { name: /save the rates/i }))
+
+    await waitFor(async () => {
+      const settings = await api.getSettings()
+      // 50 cents, not 0.5 and not 50. Every other part of the system deals in
+      // integer cents and this is the only place the conversion happens.
+      expect(settings.find((s) => s.key === 'fine.defaultDailyRateCents')?.value).toBe(50)
+    })
+  })
+
+  test('the rates card will not save a change that was not made', async () => {
+    await mountSignedIn('/policy')
+    // Waits for the loaded rate. Before it loads the form is trivially 'unchanged',
+    // so asserting on that would pass without ever checking anything.
+    await waitFor(() => expect(screen.getByLabelText(/each day after/i)).toHaveValue('0.25'))
+    // Saving on every keystroke would charge somebody at "20" on the way to "200";
+    // an unchanged form is not a save.
+    expect(screen.getByRole('button', { name: /save the rates/i })).toBeDisabled()
+  })
+
+  test('an assistant can run the desk but cannot reach these two things', async () => {
+    // Not a UI concern: the domain refuses it, so there is nothing to reach.
+    //
+    // The administrator is created and signed in first, deliberately. Without that,
+    // "Desk" becomes the *first* account — and the first account is always made an
+    // administrator whatever it asks for — so this would have been checking an
+    // administrator and passing for the wrong reason.
+    await api.createUser({ name: 'Head', email: 'head@librarian', password: 'x', role: 'admin' })
+    await api.signIn('head@librarian', 'x')
+
+    const assistant = await api.createUser({
+      name: 'Desk',
+      email: 'desk@librarian',
+      password: 'x',
+      role: 'assistant',
+    })
+    expect(assistant.role).toBe('assistant')
+
+    await expect(__mock.asUser(assistant.id, () => api.listUsers())).rejects.toThrow(/cannot/i)
+    await expect(
+      __mock.asUser(assistant.id, () => api.updateMemberType('student', { borrowLimit: 99 })),
+    ).rejects.toThrow(/cannot/i)
+  })
+
+  test('every destination in the rail has a screen behind it', async () => {
+    for (const [path, heading] of [
+      ['/', /record a book issue/i],
+      ['/register', /issue register/i],
+      ['/catalogue', /^catalogue$/i],
+      ['/students', /^students$/i],
+      ['/fines', /^fines$/i],
+      ['/policy', /borrowing rules/i],
+      ['/staff', /^staff$/i],
+      ['/import', /^import students$/i],
+      ['/backup', /^backup$/i],
+    ] as const) {
+      await mountSignedIn(path)
+      expect(await screen.findByRole('heading', { name: heading })).toBeInTheDocument()
+      cleanup()
+    }
+  })
+})

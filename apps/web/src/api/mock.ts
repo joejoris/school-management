@@ -59,6 +59,7 @@ import type {
   TitleDetail,
   TitleSummary,
   User,
+  UserStatus,
 } from '@library/contracts'
 import { CHECKABLE_COPY_STATUSES, paginate } from '@library/contracts'
 import { can, deny } from '@library/contracts'
@@ -298,6 +299,62 @@ export class MockApi implements LibraryApi {
   async listUsers(): Promise<User[]> {
     this.need('users.read')
     return [...this.db.users]
+  }
+
+  async setUserStatus(id: string, status: UserStatus): Promise<User> {
+    this.need('users.write')
+    const user = this.db.users.find((u) => u.id === id)
+    if (!user) throw new DomainRefusalError('That account does not exist.')
+    /*
+     * Refused on your own account.
+     *
+     * Switching yourself off leaves nobody able to sign in and manage accounts, and
+     * the only way back is editing the database. Refusing it here means the mistake
+     * cannot be made at all, rather than being made and then explained.
+     */
+    if (user.id === this.db.sessionUserId) {
+      throw new DomainRefusalError('You cannot switch off your own account.')
+    }
+    /*
+     * Only if *this* account is the last one that works.
+     *
+     * The first version asked whether any administrator remained, which — because
+     * the first account is always an administrator and is often the only one —
+     * refused to disable anybody. So the switch-off control could not do the one
+     * thing it exists for: switching off the second librarian.
+     *
+     * The question is not "are there administrators" but "would disabling this one
+     * leave none".
+     */
+    if (status === 'disabled' && user.role === 'admin' && this.countActiveAdmins() <= 1) {
+      throw new DomainRefusalError('This is the last working account. You cannot switch it off.')
+    }
+    user.status = status
+    return user
+  }
+
+  async setUserRole(id: string, role: Role): Promise<User> {
+    this.need('users.write')
+    const user = this.db.users.find((u) => u.id === id)
+    if (!user) throw new DomainRefusalError('That account does not exist.')
+    if (user.id === this.db.sessionUserId) {
+      throw new DomainRefusalError('You cannot change your own role.')
+    }
+    if (user.role === 'admin' && role !== 'admin' && this.countActiveAdmins() <= 1) {
+      throw new DomainRefusalError('This is the last working account. You cannot change its role.')
+    }
+    user.role = role
+    return user
+  }
+
+  /**
+   * How many administrators could still sign in.
+   *
+   * Counted from the users rather than from the session, because the whole question
+   * is what happens when this one is gone.
+   */
+  private countActiveAdmins(): number {
+    return this.db.users.filter((u) => u.role === 'admin' && u.status === 'active').length
   }
 
   // ── Circulation ───────────────────────────────────────────────────
