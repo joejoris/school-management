@@ -124,3 +124,215 @@
     transform: translateX(-50%);
   }
 }
+
+
+/*
+ * ── Libra ──────────────────────────────────────────────────────────
+ *
+ * The sign-in screen's palette, taken verbatim from the stylesheet supplied for it.
+ * Declared here rather than inline so the rest of the app adopts it one variable at
+ * a time, and so a wrong colour is a one-line fix rather than a search.
+ *
+ * Dark, indigo-to-violet, amber for the one thing on the page that matters. Amber is
+ * used once — on the primary button — because a second accent stops being an accent
+ * and starts being decoration.
+ *
+ * The hexes are the design's own, not conversions. A hand-converted oklch() that
+ * looks right on one monitor and wrong on another is worse than the number the
+ * designer chose.
+ */
+@theme {
+  --color-primary: #4f46e5;
+  --color-primary-2: #7c3aed;
+  --color-primary-deep: #2e1065;
+  --color-accent: #fbbf24;
+  --color-accent-foreground: #241b5e;
+
+  --color-ink: #e8ecf5;
+  --color-paper: #070b16;
+
+  --color-card: #0d1326;
+  --color-border: #1e2749;
+  --color-input: #26305a;
+
+  --color-secondary: #151c38;
+  --color-secondary-foreground: #e8ecf5;
+  --color-muted: #101731;
+  --color-muted-foreground: #94a3b8;
+
+  --color-danger: #fb7185;
+  --color-destructive: #fb7185;
+  --color-success: #34d399;
+  --color-ring: #6366f1;
+}
+
+/*
+ * ── The sign-in background ─────────────────────────────────────────
+ *
+ * Three layers: a violet bloom off the top-left, a purple one off the
+ * bottom-right, and near-black underneath. The third layer matters — without it
+ * the corners are transparent and the page flashes white before the gradients
+ * paint, which on a phone at a counter is a flash in somebody's eye every load.
+ *
+ * The base is #070b16 rather than pure black: a dark UI on true black looks like
+ * a hole in the screen, and the gradients have nowhere to sit.
+ */
+.signin-bg {
+  background:
+    radial-gradient(1100px 600px at 12% -10%, #241b5e 0%, transparent 55%),
+    radial-gradient(900px 600px at 95% 110%, #3b0764 0%, transparent 55%),
+    #070b16;
+}
+
+/*
+ * ── The drifting glows ─────────────────────────────────────────────
+ *
+ * `position: fixed` so they drift behind the card rather than sliding with the
+ * page, and `aria-hidden` in the markup because they are decoration.
+ *
+ * `blur(90px)` is what turns a circle into a glow. It is also expensive: two
+ * 420px layers repainting at 60fps is real work on the sort of phone this app is
+ * built for, which is why the animation is a single transform rather than a
+ * position change — transform is composited on the GPU, and `top`/`left` are not.
+ */
+.signin-blob {
+  position: fixed;
+  border-radius: 9999px;
+  filter: blur(90px);
+  opacity: 0.35;
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform;
+}
+
+.signin-blob-1 {
+  width: 420px;
+  height: 420px;
+  background: #6366f1;
+  top: -140px;
+  left: -120px;
+  animation: float1 14s ease-in-out infinite;
+}
+
+.signin-blob-2 {
+  width: 380px;
+  height: 380px;
+  background: #a855f7;
+  bottom: -160px;
+  right: -100px;
+  animation: float2 18s ease-in-out infinite;
+}
+
+@keyframes float1 {
+  50% {
+    transform: translate(60px, 50px) scale(1.15);
+  }
+}
+
+@keyframes float2 {
+  50% {
+    transform: translate(-60px, -40px) scale(1.1);
+  }
+}
+
+/*
+ * Stop both the glows and the marquee when motion is not wanted.
+ *
+ * A shared desk is not a place to run a permanent animation at somebody who did
+ * not ask for one, and for a vestibular disorder it is a reason to close the tab.
+ * `motion-reduce` is a media query the reader sets in their own settings; this
+ * only has to respect it once, in one place.
+ */
+@media (prefers-reduced-motion: reduce) {
+  .signin-blob {
+    animation: none !important;
+  }
+}
+
+/*
+ * ── The sign-in form's own controls ─────────────────────────────────
+ *
+ * Scoped to `.signin-field` rather than changing `Input` globally. The same input
+ * component is used across the signed-in app against a lighter surface, and a style
+ * that flatters a near-black panel makes text harder to read on a light card.
+ *
+ * The fill is *lighter* than the panel, not darker. On a dark surface a darker
+ * input reads as a hole punched in the card; a lighter one reads as a raised field,
+ * which is what it is.
+ */
+.signin-field {
+  height: 3.25rem;
+  background: #131a33;
+  border: 1px solid rgb(255 255 255 / 0.1);
+  border-radius: 0.75rem;
+  color: #e8ecf5;
+  transition:
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    background-color 150ms ease;
+}
+
+.signin-field::placeholder {
+  color: #64748b;
+}
+
+.signin-field:hover:not(:disabled) {
+  border-color: rgb(255 255 255 / 0.18);
+}
+
+/*
+ * Focus is a ring in the accent, not a browser outline.
+ *
+ * `outline: none` is only safe because this replaces it in the same declaration —
+ * removing a focus ring without putting something else there is what makes an app
+ * unusable by keyboard, and it is the single most common accessibility regression
+ * in a dark UI.
+ */
+.signin-field:focus {
+  outline: none;
+  border-color: #6366f1;
+  background: #161e3c;
+  box-shadow: 0 0 0 3px rgb(99 102 241 / 0.28);
+}
+
+/*
+ * The primary button.
+ *
+ * Amber, because the design says amber and because on a violet page a violet button
+ * disappears. The gradient is almost invisible — a 6% shift — and it exists so the
+ * button reads as lit from above rather than as a flat swatch.
+ */
+.signin-submit {
+  background: linear-gradient(180deg, #fbbf24 0%, #f5a91b 100%);
+  color: #241b5e;
+  box-shadow:
+    0 10px 24px -10px rgb(251 191 36 / 0.55),
+    inset 0 1px 0 rgb(255 255 255 / 0.35);
+}
+
+.signin-submit:hover:not(:disabled) {
+  filter: brightness(1.05);
+}
+
+.signin-submit:active:not(:disabled) {
+  filter: brightness(0.97);
+  /* 1px down, on press. The only motion on a sign-in screen that is feedback
+     rather than decoration. */
+  transform: translateY(1px);
+}
+
+/* The tab underline, animated from the centre so it reads as one moving object. */
+.signin-tab-underline {
+  animation: tab-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes tab-in {
+  from {
+    opacity: 0;
+    transform: scaleX(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scaleX(1);
+  }
+}

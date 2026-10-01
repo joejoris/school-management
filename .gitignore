@@ -33,3 +33,8 @@ tokens.txt
 *.token
 github_pat_*
 ghp_*
+
+# A pricing worksheet from an unrelated project that landed in this directory.
+# It is not part of the library app; this stops 'git add -A' from recommitting it.
+# The file itself is left on disk.
+/finance/
