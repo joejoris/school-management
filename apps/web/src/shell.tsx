@@ -46,33 +46,50 @@ function Rail() {
     await api.signOut()
     await queryClient.invalidateQueries({ queryKey: ['session'] })
   }
-  const [pinned, setPinned] = useState(false)
-  const [hovered, setHovered] = useState(false)
-  const open = pinned || hovered
+  /*
+   * Open or shut, and nothing else.
+   *
+   * No hover. See the note above this component: a rail that opens because the
+   * cursor drifted over it cannot tell a click on "expand" from a click on
+   * "collapse", and every version of that ambiguity that was tried produced the
+   * opposite bug in the other direction.
+   */
+  const [open, setOpen] = useState(false)
+
+  const toggle = () => setOpen((o) => !o)
 
   return (
     <>
       {/*
-        The overlay. Only on small screens, and only while open — on a tablet or
-        desktop the rail is a rail and an overlay over it would hide the content
-        behind a scrim the user did not ask for.
+        The scrim, on every screen, only while open.
+
+        It used to be desktop-hidden, because on a desktop the rail was permanently
+        open and an overlay over a permanent panel is just a way to dim the content
+        for no reason. Now that the rail opens, the scrim is what tells you the
+        panel is temporary — and tapping it closes the panel, which is what
+        somebody who opened the wrong thing expects to happen.
+
+        Deliberately dim rather than hide: the content underneath is still the
+        librarian's, and they should be able to see where they are.
       */}
       {open ? (
-        <div
-          className="fixed inset-0 z-30 bg-ink/40 lg:hidden"
-          onClick={() => setPinned(false)}
-          aria-hidden
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label="Close the menu"
+          className="fixed inset-0 z-30 cursor-default bg-ink/40 backdrop-blur-[1px] motion-reduce:backdrop-blur-none"
         />
       ) : null}
 
       <nav
-        onMouseEnter={() => setHovered(true)}
-        onMouseLeave={() => setHovered(false)}
         aria-label="Main"
         className={cn(
-          'fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-card',
-          'transition-[width] duration-200 ease-out',
-          'w-[4rem] lg:w-60',
+          'fixed inset-y-0 left-0 z-40 flex flex-col border-r border-border bg-card shadow-xl shadow-black/10',
+          'transition-[width] duration-200 ease-out motion-reduce:transition-none',
+          // Narrow until asked, on every screen. There is no width at which this
+          // earns 240px of permanent space: the form it would be crowding is two
+          // fields wide.
+          'w-[4rem]',
           open && 'w-60',
         )}
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
@@ -80,7 +97,7 @@ function Rail() {
         <div className="flex items-center gap-3 px-3 py-4">
           <button
             type="button"
-            onClick={() => setPinned((p) => !p)}
+            onClick={toggle}
             aria-label={open ? 'Collapse the menu' : 'Expand the menu'}
             aria-expanded={open}
             className="flex size-11 shrink-0 items-center justify-center rounded-lg text-muted-foreground hover:bg-secondary"
@@ -88,13 +105,19 @@ function Rail() {
             <PanelLeft />
           </button>
           {/*
-            The name is hidden rather than clipped when collapsed. A half-shown
-            word reads as a rendering fault; nothing reads better than nothing.
+            The name is hidden rather than clipped when collapsed. A half-shown word
+            reads as a rendering fault; nothing reads better than nothing.
+
+            Opacity rather than `hidden`, because a link or heading that stops being
+            exposed when it stops being visible is invisible to a screen reader — and
+            this is the app's only navigation. The rail's links carry `aria-label`
+            for the same reason: the name must not depend on the drawer's state.
           */}
           <span
+            aria-hidden
             className={cn(
               'min-w-0 truncate text-sm font-semibold tracking-tight transition-opacity',
-              open ? 'opacity-100' : 'opacity-0 lg:opacity-100',
+              open ? 'opacity-100' : 'opacity-0',
             )}
           >
             Library
@@ -108,7 +131,11 @@ function Rail() {
               <li key={to}>
                 <Link
                   to={to}
-                  onClick={() => setPinned(false)}
+                  onClick={() => setOpen(false)}
+                  // Always named, open or shut. A collapsed rail shows icons, and an
+                  // icon-only link with no name is four unlabelled links to anyone
+                  // navigating by keyboard or listening rather than looking.
+                  aria-label={label}
                   aria-current={active ? 'page' : undefined}
                   className={cn(
                     'flex min-h-11 items-center gap-3 rounded-lg px-3 text-sm font-medium',
@@ -119,7 +146,11 @@ function Rail() {
                   )}
                 >
                   <Icon className="size-5 shrink-0" />
-                  <span className={cn('truncate', !open && 'hidden lg:inline')}>{label}</span>
+                  {/* `aria-hidden`: the anchor already carries this name, so announcing
+                  it twice would read "Register, Register". */}
+              <span aria-hidden className={cn('truncate', !open && 'hidden')}>
+                {label}
+              </span>
                 </Link>
               </li>
             )
@@ -141,7 +172,10 @@ function Rail() {
         <div className="border-t border-border p-2">
           <div className="mb-1 flex items-center gap-3 px-2 py-1">
             <SchoolLogo size={28} className="shrink-0" />
-            <span className={cn('min-w-0 text-xs leading-tight', !open && 'hidden lg:inline')}>
+            <span
+              aria-hidden
+              className={cn('min-w-0 text-xs leading-tight', !open && 'hidden')}
+            >
               Dandora Secondary
               <br />
               School Library
@@ -151,13 +185,23 @@ function Rail() {
           <button
             type="button"
             onClick={() => void signOut()}
+            /*
+             * `aria-label` on the button, because the visible word is `aria-hidden` and
+             * hidden when the rail is shut — and without this the button has *no*
+             * accessible name at all in the collapsed state. A test looking for
+             * "Sign out" found nothing, which is the same thing a screen reader
+             * would have found.
+             */
+            aria-label="Sign out"
             className={cn(
               'flex min-h-11 w-full items-center gap-3 rounded-lg px-3 text-sm font-medium',
               'text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground',
             )}
           >
             <LogOut className="size-4 shrink-0" />
-            <span className={cn('truncate', !open && 'hidden lg:inline')}>Sign out</span>
+            <span aria-hidden className={cn('truncate', !open && 'hidden')}>
+              Sign out
+            </span>
           </button>
         </div>
       </nav>
@@ -182,8 +226,11 @@ export function Shell() {
           // bottom toolbar when it collapses. Without it the last row of a long
           // register sits under both.
           'pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 lg:pb-10',
-          // Matches the rail's width so the column clears the panel when it is
-          // pinned, and centres in what is actually visible when it is not.
+          // Exactly the rail's collapsed width, on every screen.
+          //
+          // Not its open width: the rail is `fixed`, so when it opens it overlays
+          // this column rather than pushing it. Reserving 240px for a panel that is
+          // covering the content would leave a dead strip down the side.
           'lg:pl-[4rem]',
         )}
       >

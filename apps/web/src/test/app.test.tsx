@@ -594,3 +594,130 @@ describe('after creating an account', () => {
     expect(screen.getByText(/records are kept in this browser only/i)).toBeInTheDocument()
   })
 })
+
+/*
+ * The rail is a rail, and it opens.
+ *
+ * It used to be a permanent 240px column on any screen wide enough. That column
+ * earned nothing: the entry form it crowded is two fields wide, and 240px is a
+ * fifth of a tablet.
+ */
+
+describe('the sidebar pops up', () => {
+  const isExpanded = () =>
+    screen.getByRole('button', { name: /expand the menu|collapse the menu/i }).getAttribute('aria-expanded')
+
+  test('it starts collapsed, with no permanent wide column', async () => {
+    await mountSignedIn('/')
+    const nav = await screen.findByRole('navigation', { name: /main/i })
+
+    expect(nav.className).toContain('w-[4rem]')
+    // The rule this change removed, and the reason for it: a permanent 240px column
+    // on any screen wide enough, crowding a form that is two fields wide.
+    expect(nav.className).not.toContain('lg:w-60')
+  })
+
+  /*
+   * This test found a real bug.
+   *
+   * The rail used to open on hover: `open = pinned || hovered`. With a mouse the
+   * pointer is always over the rail when you click it, so `hovered` was already true
+   * and the click read as "collapse" — the expand button did nothing. On a phone
+   * there is no hover, so it worked there, which is why it passed every check run on
+   * the machine that ran the tests.
+   *
+   * Hover is gone. There is one input, and it means one thing.
+   */
+  test('the toggle opens it, and closes it again', async () => {
+    const { user } = await mountSignedIn('/')
+    const nav = await screen.findByRole('navigation', { name: /main/i })
+
+    expect(isExpanded()).toBe('false')
+
+    await user.click(screen.getByRole('button', { name: /expand the menu/i }))
+    expect(isExpanded()).toBe('true')
+    expect(nav.className).toContain('w-60')
+
+    await user.click(screen.getByRole('button', { name: /collapse the menu/i }))
+    expect(isExpanded()).toBe('false')
+    expect(nav.className).toContain('w-[4rem]')
+  })
+
+  test('it stays open while the pointer is still over it', async () => {
+    const { user } = await mountSignedIn('/')
+    await screen.findByRole('navigation', { name: /main/i })
+
+    await user.click(screen.getByRole('button', { name: /expand the menu/i }))
+    // Moving the mouse over the rail must not close it. It did, in the version this
+    // replaced, because the toggle's meaning was derived from a hover flag.
+    await user.hover(screen.getByRole('navigation', { name: /main/i }))
+    expect(isExpanded()).toBe('true')
+  })
+
+  /*
+   * Every destination is named whether or not the drawer is open.
+   *
+   * The visible word is hidden with Tailwind's `hidden`, and jsdom has no stylesheet
+   * — so "is this word visible" is not a question this environment can answer. What
+   * *is* answerable, and what actually matters, is that the links have names: a
+   * collapsed rail shows icons, and an icon-only link with no name is four
+   * unlabelled links to anyone navigating by keyboard or listening rather than
+   * looking.
+   */
+  test('every destination is named while collapsed, and again when open', async () => {
+    const { user } = await mountSignedIn('/')
+    const nav = await screen.findByRole('navigation', { name: /main/i })
+    const labels = ['Record issue', 'Register', 'Import', 'Backup']
+
+    for (const label of labels) {
+      expect(within(nav).getByRole('link', { name: new RegExp(label, 'i') })).toBeInTheDocument()
+    }
+
+    await user.click(screen.getByRole('button', { name: /expand the menu/i }))
+
+    for (const label of labels) {
+      expect(within(nav).getByRole('link', { name: new RegExp(label, 'i') })).toBeInTheDocument()
+    }
+  })
+
+  test('sign out is reachable from the collapsed rail too', async () => {
+    const { user } = await mountSignedIn('/')
+    const nav = await screen.findByRole('navigation', { name: /main/i })
+
+    // Otherwise the only way out is to open a drawer first, which is a poor thing to
+    // demand of somebody who just wants to lock the screen.
+    expect(within(nav).getByRole('button', { name: /sign out/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /expand the menu/i }))
+    await user.click(within(nav).getByRole('button', { name: /sign out/i }))
+    await waitFor(() => expect(screen.queryByRole('navigation')).not.toBeInTheDocument())
+  })
+
+  test('the scrim appears while open, and closing by it works', async () => {
+    const { user } = await mountSignedIn('/')
+    await screen.findByRole('navigation', { name: /main/i })
+
+    // Previously `lg:hidden`, because on a desktop the rail was permanently open and
+    // a scrim over a permanent panel is just dimming the content for no reason. Now
+    // that the rail opens, the scrim is what says the panel is temporary.
+    expect(screen.queryByRole('button', { name: /close the menu/i })).not.toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /expand the menu/i }))
+    expect(screen.getByRole('button', { name: /close the menu/i })).toBeInTheDocument()
+
+    await user.click(screen.getByRole('button', { name: /close the menu/i }))
+    expect(isExpanded()).toBe('false')
+  })
+
+  test('choosing a destination closes it, so it does not cover the page asked for', async () => {
+    const { user } = await mountSignedIn('/')
+    const nav = await screen.findByRole('navigation', { name: /main/i })
+
+    await user.click(screen.getByRole('button', { name: /expand the menu/i }))
+    await user.click(within(nav).getByRole('link', { name: /register/i }))
+
+    // Left open, it would sit over the register somebody just asked for.
+    await waitFor(() => expect(isExpanded()).toBe('false'))
+    expect(await screen.findByRole('heading', { name: /issue register/i })).toBeInTheDocument()
+  })
+})
