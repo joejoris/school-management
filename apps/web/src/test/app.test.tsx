@@ -71,7 +71,7 @@ beforeEach(() => {
  * Arranged `before` the render rather than through the form, because the form's own
  * behaviour is what the entry-form tests are about.
  */
-async function mountSignedIn(path = '/') {
+async function mountSignedIn(path = '/', arrange?: () => Promise<unknown>) {
   await api.createUser({
     email: 'head@dandorasecondary.go.ke',
     name: 'Head Librarian',
@@ -79,6 +79,11 @@ async function mountSignedIn(path = '/') {
     role: 'admin',
   })
   await api.signIn('head@dandorasecondary.go.ke', 'x')
+  // `arrange` runs after signing in and before the first render, so a test that
+  // needs a student on file gets a component whose very first paint already knows
+  // about them. Asserting on the second render of a form proves less than it looks
+  // like it proves.
+  if (arrange) await arrange()
   return mount(path)
 }
 
@@ -243,9 +248,18 @@ describe('the gate at /', () => {
     await user.type(screen.getByLabelText(/^password$/i), 'a-long-enough-password')
     await user.click(screen.getByRole('button', { name: /create the account/i }))
 
-    // And the entry form appears — no navigation, because there is nowhere to
-    // navigate to.
+    // Not the entry form yet. Creating an account and signing in are two acts,
+    // and the second is a press of a button on the screen every subsequent sign-in
+    // will use.
+    expect(await screen.findByRole('button', { name: /^sign in$/i })).toBeInTheDocument()
+    expect(await api.currentUser()).toBeNull()
+
+    // Press it, and the entry form appears — no navigation, because there is nowhere
+    // to navigate to.
+    await user.click(screen.getByRole('button', { name: /^sign in$/i }))
     expect(await screen.findByRole('heading', { name: /record a book issue/i })).toBeInTheDocument()
+    // The first account runs the library, whatever role it asked for.
+    expect(await api.currentUser()).toMatchObject({ role: 'admin' })
   })
 
   test('once an account exists, / offers sign-in and account creation', async () => {
@@ -391,8 +405,8 @@ describe('creating an account leads to sign-in', () => {
     await user.type(screen.getByLabelText(/^password$/i), 'a-long-enough-password')
     await user.click(screen.getByRole('button', { name: /create the account/i }))
 
-    // Straight in, using what was just typed — no second round of typing, and no
-    // navigation.
+    // The sign-in form, already holding what was just typed. Then one press.
+    await user.click(await screen.findByRole('button', { name: /^sign in$/i }))
     expect(await screen.findByRole('heading', { name: /record a book issue/i })).toBeInTheDocument()
     expect(await api.currentUser()).toMatchObject({ email: 'head@dandorasecondary.go.ke' })
   })
@@ -404,5 +418,179 @@ describe('creating an account leads to sign-in', () => {
     expect(await api.currentUser()).toBeNull()
     await api.signIn('a@librarian', 'x')
     expect(await api.currentUser()).not.toBeNull()
+  })
+})
+
+/*
+ * Enrolment: Form, Grade and Stream.
+ *
+ * These three used to appear only when the admission number was not on file, which
+ * left nowhere to record a correction for a student who *was* on file. They are now
+ * always visible, and read-only once the student is recognised.
+ */
+describe('enrolment: form, grade and stream', () => {
+  const optionsOf = (listId: string) =>
+    Array.from(document.querySelectorAll(`datalist#${listId} option`)).map((o) =>
+      o.getAttribute('value'),
+    )
+
+  test('all three are on the form before anything is typed', async () => {
+    await mountSignedIn('/')
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    // Always visible, not hidden behind "no student on file". A librarian
+    // correcting a stream after a transfer needs somewhere to put it.
+    expect(screen.getByLabelText(/^form$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^grade$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^stream$/i)).toBeInTheDocument()
+  })
+
+  test('there is no Class field', async () => {
+    const { user } = await mountSignedIn('/')
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    // Checked in the state where the enrolment block is actually rendered.
+    //
+    // An earlier version of this test asserted on an empty form, where the block is
+    // hidden — so a Class field sitting in the source passed, because it never made
+    // it onto the screen. The guard was checking an unrelated branch.
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
+    await screen.findByText(/no student with that number is on file/i)
+
+    // The school identifies a student by admission number, form, grade and stream.
+    // A class field is a fifth way to say something the others already say, and two
+    // of them disagreeing is a register nobody can query.
+    expect(screen.queryByLabelText(/^class$/i)).not.toBeInTheDocument()
+    // ...and the fields it would have sat beside really are on screen, so a passing
+    // result means the block rendered and the field was absent.
+    expect(screen.getByLabelText(/^form$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^stream$/i)).toBeInTheDocument()
+  })
+
+  test('form suggests Form 3 and Form 4, and nothing else', async () => {
+    await mountSignedIn('/')
+    await screen.findByRole('heading', { name: /record a book issue/i })
+    expect(optionsOf('form-suggestions')).toEqual(['Form 3', 'Form 4'])
+    expect(screen.getByLabelText(/^form$/i)).toHaveAttribute('list', 'form-suggestions')
+  })
+
+  test('grade suggests 10, 11 and 12, and nothing else', async () => {
+    await mountSignedIn('/')
+    await screen.findByRole('heading', { name: /record a book issue/i })
+    expect(optionsOf('grade-suggestions')).toEqual(['10', '11', '12'])
+    expect(screen.getByLabelText(/^grade$/i)).toHaveAttribute('list', 'grade-suggestions')
+  })
+
+  test('stream is free text with no suggestions at all', async () => {
+    await mountSignedIn('/')
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    const stream = screen.getByLabelText(/^stream$/i)
+    // No `list`, and no datalist element either. An empty datalist still makes the
+    // browser show a dropdown, so "no suggestions" has to mean the attribute is
+    // absent — a test for `toBeNull()` on the element alone would pass on an empty
+    // list and miss the whole point.
+    expect(stream).not.toHaveAttribute('list')
+    expect(document.querySelector('datalist#stream-suggestions')).toBeNull()
+  })
+
+  test('a known student has their details shown, and locked', async () => {
+    const { user } = await mountSignedIn('/', () =>
+      api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+        form: 'Form 4',
+        grade: '11',
+        stream: 'Red Stream',
+      }),
+    )
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+
+    const form = screen.getByLabelText(/^form$/i)
+    const grade = screen.getByLabelText(/^grade$/i)
+    const stream = screen.getByLabelText(/^stream$/i)
+
+    // Wait on the form field, not on the name.
+    //
+    // The name renders as two text nodes — \`{firstName} {lastName}\` — so there is
+    // no element whose *display value* is "Kept Student", and a test looking for one
+    // waits for something that can never appear.
+    await waitFor(() => expect(form).toHaveValue('Form 4'))
+    expect(grade).toHaveValue('11')
+    expect(stream).toHaveValue('Red Stream')
+
+    // Shown, not blank: an empty box beside a known name reads as "no information"
+    // when it actually means "look it up". Read-only, and saying why. Issuing a book must not rewrite an enrolment: a
+    // mistyped number could otherwise put four years of borrowing against the wrong
+    // child, with no confirmation and no undo.
+    expect(form).toHaveAttribute('readonly')
+    expect(grade).toHaveAttribute('readonly')
+    expect(stream).toHaveAttribute('readonly')
+    expect(screen.getByText(/issuing a book should never rewrite an enrolment/i)).toBeInTheDocument()
+  })
+
+  test('an unknown student gets empty, editable boxes', async () => {
+    const { user } = await mountSignedIn('/')
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
+    await screen.findByText(/no student with that number is on file/i)
+
+    const form = screen.getByLabelText(/^form$/i)
+    expect(form).not.toHaveAttribute('readonly')
+    await user.type(form, 'Form 3')
+    await user.type(screen.getByLabelText(/^grade$/i), '10')
+    await user.type(screen.getByLabelText(/^stream$/i), 'Red Stream')
+
+    expect(form).toHaveValue('Form 3')
+    expect(screen.getByLabelText(/^grade$/i)).toHaveValue('10')
+    expect(screen.getByLabelText(/^stream$/i)).toHaveValue('Red Stream')
+  })
+})
+
+describe('after creating an account', () => {
+  test('the sign-in screen appears, holding the same details', async () => {
+    const { user } = mount('/')
+    await screen.findByText(/no accounts exist yet/i)
+
+    await user.type(screen.getByLabelText(/your name/i), 'Head Librarian')
+    await user.type(screen.getByLabelText(/email address/i), 'head@dandorasecondary.go.ke')
+    await user.type(screen.getByLabelText(/^password$/i), 'a-long-enough-password')
+    await user.click(screen.getByRole('button', { name: /create the account/i }))
+
+    // The sign-in step is visible, and it holds the same details.
+    //
+    // Three earlier versions failed this in different ways: it signed in directly so
+    // the form was never seen; it replaced the form with a status line and signed in
+    // behind that; and it flipped to the sign-in tab and submitted immediately, fast
+    // enough that the screen had already changed back. The last one is the reason
+    // this test now *waits* for the button rather than assuming it.
+    expect(await screen.findByRole('button', { name: /^sign in$/i })).toBeInTheDocument()
+    expect(screen.getByText(/account created/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/email address/i)).toHaveValue('head@dandorasecondary.go.ke')
+    expect(screen.getByLabelText(/^password$/i)).toHaveValue('a-long-enough-password')
+
+    // Nobody is signed in until the button is pressed.
+    expect(await api.currentUser()).toBeNull()
+
+    await user.click(screen.getByRole('button', { name: /^sign in$/i }))
+    expect(await screen.findByRole('heading', { name: /record a book issue/i })).toBeInTheDocument()
+    expect(await api.currentUser()).toMatchObject({ email: 'head@dandorasecondary.go.ke' })
+  })
+
+  test('a signed-out visitor can clear a leftover account', async () => {
+    // The state this exists for: a record left in the browser by an earlier session,
+    // whose owner cannot remember it and cannot sign in — and cannot reach the
+    // Backup screen either, because that is behind the sidebar.
+    await api.createUser({ email: 'someone@old', name: 'Old', password: 'x', role: 'admin' })
+    mount('/')
+
+    const clear = await screen.findByRole('button', { name: /clear them and start again/i })
+    expect(clear).toBeInTheDocument()
+    expect(screen.getByText(/records are kept in this browser only/i)).toBeInTheDocument()
   })
 })

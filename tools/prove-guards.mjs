@@ -34,6 +34,7 @@ const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const ROUTES = join(root, 'apps/web/src/routes.tsx')
 const FORM = join(root, 'apps/web/src/features/issues/RecordIssue.tsx')
 const GATE = join(root, 'apps/web/src/features/auth/AuthLayout.tsx')
+const SCHOOL = join(root, 'packages/contracts/src/school.ts')
 const SHELL = join(root, 'apps/web/src/shell.tsx')
 
 /**
@@ -138,19 +139,6 @@ const BREAKS = [
     mustFail: 'an unknown path says so rather than silently landing on the entry form',
   },
   {
-    what: 'the stream field gets a suggestion list back',
-    file: FORM,
-    from: `                        placeholder="Red Stream"
-                        autoComplete="off"
-                      />`,
-    to: `                        placeholder="Red Stream"
-                        autoComplete="off"
-                        list="stream-suggestions"
-                      />
-                      <datalist id="stream-suggestions" />`,
-    mustFail: 'stream is free text, and the hint says so',
-  },
-  {
     what: 'a failed record clears the form',
     file: FORM,
     from: `      setSaved(null)
@@ -173,12 +161,47 @@ const BREAKS = [
     mustFail: 'signed out, there is no navigation at all',
   },
   {
-    what: 'creating an account signs you in without going through sign-in',
-    file: join(root, 'apps/web/src/features/auth/SetupPanel.tsx'),
-    from: `        await api.signIn(address, password)
-        return`,
-    to: `        return`,
-    mustFail: 'an account is created and then signed in with the same details',
+    /*
+     * The school's own lists, emptied.
+     *
+     * Worth proving separately from the other enrolment breaks because the failure
+     * is invisible rather than loud: a missing Form or Grade suggestion still looks
+     * like a working dropdown, it just offers nothing, and a librarian finds out
+     * when the term starts.
+     */
+    what: 'the form suggestion list is emptied',
+    file: SCHOOL,
+    from: `export const FORM_SUGGESTIONS = ['Form 3', 'Form 4'] as const`,
+    to: `export const FORM_SUGGESTIONS = [] as unknown as readonly ['Form 3', 'Form 4']`,
+    mustFail: 'form suggests Form 3 and Form 4, and nothing else',
+  },
+  {
+    what: 'the grade list gains a year the school does not run',
+    file: SCHOOL,
+    from: `export const GRADE_SUGGESTIONS = ['10', '11', '12'] as const`,
+    to: `export const GRADE_SUGGESTIONS = ['10', '11', '12', '13'] as const`,
+    mustFail: 'grade suggests 10, 11 and 12, and nothing else',
+  },
+  {
+    what: 'a suggestion list is put back on the stream field',
+    file: FORM,
+    from: `                    placeholder="Red Stream"
+                    autoComplete="off"`,
+    to: `                    placeholder="Red Stream"
+                    autoComplete="off"
+                    list="stream-suggestions"`,
+    mustFail: 'stream is free text with no suggestions at all',
+  },
+  {
+    what: 'the Class field comes back',
+    file: FORM,
+    from: `                  <datalist id="form-suggestions">`,
+    to: `                  {/* Injected by tools/prove-guards.mjs to prove the Class guard. */}
+                  <Field label="Class" htmlFor="className">
+                    <Input id="className" />
+                  </Field>
+                  <datalist id="form-suggestions">`,
+    mustFail: 'there is no Class field',
   },
   {
     what: 'the submit button is enabled with an empty form',

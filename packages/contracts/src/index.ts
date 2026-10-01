@@ -11,6 +11,7 @@ export * from './entities.ts'
 export * from './page.ts'
 export * from './refusals.ts'
 export * from './permissions.ts'
+export * from './school.ts'
 export type { LibraryApi } from './api.ts'
 export type {
   AddCopiesInput,

@@ -46,7 +46,7 @@
  */
 import { useState, type ReactNode } from 'react'
 import { useMutation } from '@tanstack/react-query'
-import { api } from '../../api'
+import { api, __mode, resetLocalMirror } from '../../api'
 import { Button, Field, Input, cn } from '../../components/ui'
 import { LockKeyhole, SchoolLogo, UserPlus } from '../../components/icons'
 
@@ -64,28 +64,47 @@ export function SetupPanel({
   const [error, setError] = useState<string | null>(null)
   const [showPassword, setShowPassword] = useState(false)
   /*
-   * Set while the account exists but the sign-in has not finished.
+   * Set once the account exists and the sign-in form is showing, prefilled.
    *
-   * A short status rather than a form filling itself in: the person who just pressed
-   * the button is not asking to sign in, they are waiting to get in.
+   * `justCreated` is the reason the form is worth looking at: the fields are already
+   * filled in with what was just typed, so signing in is one press rather than three.
    */
-  const [pendingSignIn, setPendingSignIn] = useState(false)
+  const [justCreated, setJustCreated] = useState(false)
 
   const go = useMutation({
     mutationFn: async () => {
       const address = email.trim()
       if (tab === 'signup') {
         await api.createUser({ email: address, name: name.trim(), password, role: 'assistant' })
-        // A real sign-in through the same path every other sign-in takes — not a back
-        // door. `createUser` opens no session.
-        await api.signIn(address, password)
+
+        /*
+         * Then stop, and show the sign-in form with those same details in it.
+         *
+         * Three versions of this, and the sign-in step was invisible in all of them.
+         *
+         * First it signed in directly, so the form was never seen at all. Then it
+         * swapped the form for a status line and signed in behind that, so the step
+         * existed only in the code. Then it flipped to the sign-in tab and submitted
+         * immediately — fast enough that the screen had already changed back before
+         * it could be read, which is the same as not having it.
+         *
+         * So it waits. The person who set the system up presses Sign in, exactly as
+         * the next librarian will, and watches the same screen that everybody else
+         * will. Silently authenticating somebody because they created an account is
+         * also the wrong habit to build into a system where one screen has a password
+         * box on it.
+         *
+         * `createUser` opens no session, so this is a real sign-in through the same
+         * path every other sign-in takes — not a back door.
+         */
+        setTab('signin')
+        setJustCreated(true)
         return
       }
       await api.signIn(address, password)
     },
     onSuccess: () => void onSignedIn(),
     onError: (e: unknown) => {
-      setPendingSignIn(false)
       setError(e instanceof Error ? e.message : 'That did not work.')
     },
   })
@@ -226,8 +245,8 @@ export function SetupPanel({
                   active={tab === 'signin'}
                   onClick={() => {
                     setTab('signin')
+                    setJustCreated(false)
                     setError(null)
-                    setPendingSignIn(false)
                   }}
                 >
                   Sign in
@@ -236,8 +255,8 @@ export function SetupPanel({
                   active={tab === 'signup'}
                   onClick={() => {
                     setTab('signup')
+                    setJustCreated(false)
                     setError(null)
-                    setPendingSignIn(false)
                   }}
                 >
                   Create account
@@ -258,17 +277,26 @@ export function SetupPanel({
               onSubmit={(e) => {
                 e.preventDefault()
                 setError(null)
-                if (tab === 'signup') setPendingSignIn(true)
                 go.mutate()
               }}
             >
-              {pendingSignIn ? (
-                <p role="status" className="py-8 text-center text-sm text-muted-foreground">
-                  Account created. Signing you in…
+              {/*
+              The form is never replaced.
+            */}
+            <>
+              {justCreated ? (
+                <p
+                  role="status"
+                  className="flex items-start gap-2 rounded-lg border border-success/40 bg-success/10 px-3 py-2 text-sm text-success"
+                >
+                  <span>
+                    <strong className="font-medium">Account created.</strong> Sign in
+                    below — your details are already filled in.
+                  </span>
                 </p>
-              ) : (
-                <>
-                  {needsName ? (
+              ) : null}
+
+              {needsName ? (
                     <Field label="Your name" htmlFor="name">
                       <Input
                         id="name"
@@ -338,7 +366,7 @@ export function SetupPanel({
 
                   <Button
                     type="submit"
-                    disabled={!canSubmit || go.isPending || pendingSignIn}
+                    disabled={!canSubmit || go.isPending}
                     size="lg"
                     className={cn(
                       'signin-submit mt-1 w-full font-semibold',
@@ -346,15 +374,39 @@ export function SetupPanel({
                     )}
                   >
                     {needsName ? <UserPlus /> : <LockKeyhole />}
-                    {go.isPending ? 'Working…' : needsName ? 'Create the account' : 'Sign in'}
-                  </Button>
-                </>
-              )}
+                      {go.isPending ? 'Working…' : needsName ? 'Create the account' : 'Sign in'}
+                    </Button>
+            </>
             </form>
 
             <p className="mt-6 text-center text-xs text-muted-foreground lg:text-left">
               Students do not need accounts. Only the staff who run the library sign in.
             </p>
+
+            {/*
+              The way out, for whoever is locked out.
+
+              Records are kept in this browser until the database is connected, so
+              somebody can be signed out of an account they no longer remember
+              creating — and the screen that would clear it sits behind the sidebar
+              they cannot reach. That is a dead end with no key visible.
+
+              Shown only when the records really are local. Once this talks to a real
+              backend the local copy is not the record, and offering to erase it would
+              be a lie that deletes nothing while looking like it worked.
+            */}
+            {__mode === 'mock' ? (
+              <div className="mt-6 border-t border-white/8 pt-5 text-center text-xs text-muted-foreground lg:text-left">
+                <p>Records are kept in this browser only.</p>
+                <button
+                  type="button"
+                  onClick={resetLocalMirror}
+                  className="mt-1.5 underline underline-offset-4 transition-colors hover:text-foreground"
+                >
+                  Clear them and start again
+                </button>
+              </div>
+            ) : null}
           </section>
         </div>
       </div>
