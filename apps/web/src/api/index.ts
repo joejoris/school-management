@@ -1,90 +1,101 @@
 /**
  * THE SEAM.
  *
- * Everything in the interface imports `api` from here and nothing else. No
- * feature imports a backend, imports `fetch`, or knows how records are stored.
- * Switching where the records live is a change to this file and nowhere else.
+ * Everything in the interface imports `api` from here and nothing else. No feature
+ * imports a backend, imports `fetch`, or knows how records are stored. Switching
+ * where the records live is a change to this file and nowhere else.
  *
- * That is what makes it safe to start in the browser with no infrastructure and
- * move to a real backend later: the screens never learn that it happened.
+ * ── Two modes, and refusing to fall back ─────────────────────────────
+ *
+ * \`mock\`   the in-memory domain, mirrored into localStorage. Works with no
+ *           infrastructure at all, which is what makes the frontend buildable and
+ *           reviewable on its own.
+ * \`supabase\` the real thing: Postgres, Auth and RLS, reached from the browser.
+ *
+ * If \`supabase\` is asked for and the credentials are missing, this throws at module
+ * load rather than falling back. The fallback is the exact failure worth avoiding:
+ * the app loads, looks completely healthy, and quietly keeps every record in one
+ * browser tab. Somebody would type a term of borrowings into it and believe it was
+ * saved.
+ *
+ * ── The token is read fresh on every request ─────────────────────────
+ *
+ * \`accessToken()\` calls into the Supabase client each time rather than capturing a
+ * token once. A captured token expires, and an expired token produces an RLS refusal
+ * that looks exactly like a permissions bug — which is a genuinely confusing thing
+ * to debug hours later.
+ *
+ * ── What this file is not ───────────────────────────────────────────
+ *
+ * It is not a place for policy. The permissions table lives in
+ * \`@library/contracts\` and is enforced again in SQL; a third copy here would be a
+ * third thing to keep in step with the other two.
  */
-
 import type { LibraryApi } from '@library/contracts'
 import { MockApi } from './mock'
+import { SupabaseApi } from './supabase-api'
 
-/**
- * Where the records come from.
- *
- * `mock` keeps everything in the browser. `supabase` is the real one, and it is
- * not implemented yet — this build is the frontend, deliberately, before the
- * database. Asking for it fails loudly rather than falling back, because a
- * silent fallback looks exactly like a working register.
- */
 export type Mode = 'mock' | 'supabase'
 
-/**
- * Read once, at module load.
- *
- * `import.meta.env` is replaced at build time, so a value that is not set cannot
- * be read lazily - which is why this is a constant and not a function. It also
- * means a mode that is compiled in cannot be changed at runtime, and pretending
- * otherwise produces an app that half-believes it has a backend.
- */
 const mode = (import.meta.env.VITE_API_MODE as Mode | undefined) ?? 'mock'
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 
-/*
- * Refuse to guess.
- *
- * If `supabase` is asked for and the credentials are missing, this throws at
- * module load rather than falling back to the mock. The fallback is the exact
- * failure this project has already had once: the app loads, looks completely
- * healthy, and quietly keeps every record in one browser tab. A person would
- * type a term of borrowings into it and believe it was saved.
- */
-if (false) {
+const missing: string[] = []
+if (mode === 'supabase') {
+  if (!supabaseUrl) missing.push('VITE_SUPABASE_URL')
+  if (!supabaseAnonKey) missing.push('VITE_SUPABASE_ANON_KEY')
+}
+
+if (missing.length > 0) {
   throw new Error(
-    'VITE_API_MODE=supabase needs VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY. ' +
-      'Refusing to fall back to the mock, because the mock looks exactly like a ' +
-      'working register and is not one.',
+    `VITE_API_MODE=supabase needs ${missing.join(' and ')}. ` +
+      'Refusing to fall back to the mock, because a mock register looks exactly like a ' +
+      'working one and is not one.',
   )
 }
 
 const mock = new MockApi()
 
-/*
- * The mock is the only implementation so far, because this is the frontend and
- * the database comes next. The seam is the single place that changes: when
- * `supabase-api.ts` exists, this becomes
+/**
+ * The live client.
  *
- *     mode === 'supabase' ? new SupabaseApi({ url, anonKey }) : mock
+ * Built with a dynamic import so a mock build does not carry the Supabase library —
+ * which is about a hundred kilobytes that a school on a slow connection should not
+ * download to read books that were never issued.
  *
- * and nothing above this line changes.
- *
- * Until then, asking for `supabase` throws here rather than quietly using the
- * mock. That failure is the point: a build configured for the real backend and
- * silently running on a browser tab is a register that empties on reload and
- * looks fine until somebody has typed a term into it.
+ * The module is therefore async, and everything that needs `api` awaits `ready()`
+ * once at start-up. A top-level await here would make this module asynchronous and
+ * leave every `import { api }` in the app depending on module resolution order,
+ * which fails as a blank screen rather than as an error.
  */
+let resolved: LibraryApi | null = null
+
 if (mode === 'supabase') {
-  throw new Error(
-    'VITE_API_MODE=supabase is not available in this build. The database has not ' +
-      'been built yet - see the seam in src/api/index.ts, which is the one place that ' +
-      'changes when it is. Refusing to fall back to the mock, because a mock register ' +
-      'looks exactly like a real one.',
-  )
+  const { createClient } = await import('@supabase/supabase-js')
+  const client = createClient(supabaseUrl!, supabaseAnonKey!, {
+    auth: { persistSession: true, autoRefreshToken: true },
+  })
+  resolved = new SupabaseApi({
+    url: supabaseUrl!,
+    anonKey: supabaseAnonKey!,
+    accessToken: async () => (await client.auth.getSession()).data.session?.access_token ?? null,
+  })
+} else {
+  resolved = mock
 }
 
-const base: LibraryApi = mock
+const base: LibraryApi = resolved
 
 /**
  * Local mirroring, for the mock only.
  *
- * A real backend is the system of record, and copying its state into
- * localStorage would create a second source of truth that can disagree with it —
- * which is the one thing a shared register must not have.
+ * A real backend is the system of record, and copying its state into localStorage
+ * would create a second source of truth that can disagree with it — the one thing a
+ * shared register must not have.
  *
- * The check is `mode === 'mock'` and not `mode !== 'supabase'`: a mode added
- * later must not inherit mirroring by accident.
+ * The check is \`mode === 'mock'\` and not \`mode !== 'supabase'\`: a mode added later
+ * must not inherit mirroring by accident.
  */
 const persistence = mode === 'mock' ? installLocalMirror(base, mock) : null
 
@@ -98,13 +109,10 @@ export const __mode = mode
  * Where the records are, in one sentence, for the screens that have to be honest
  * about it.
  *
- * A function as well as a value, so both wordings are testable without building
- * the bundle twice.
- *
- * The wording names the school and never the vendor. "Stored in Supabase" is
- * true and useless to a librarian, who does not know what Supabase is and cannot
- * act on it. The sentence has one job — your records are not in this browser, so
- * clearing your browser will not lose them — and a product name buried it.
+ * The wording names the school and never the vendor. "Stored in Supabase" is true
+ * and useless to a librarian, who does not know what Supabase is and cannot act on
+ * it. The sentence has one job — your records are not in this browser, so clearing
+ * your browser will not lose them — and a product name buried it.
  */
 export const storageNoteFor = (m: Mode): string =>
   m === 'mock'
@@ -126,12 +134,12 @@ function installLocalMirror(target: LibraryApi, source: MockApi) {
     try {
       localStorage.setItem('library-local:v1', JSON.stringify(source.exportState()))
     } catch {
-      // A full or disabled localStorage must not stop somebody issuing a book.
-      // The session is the thing being recorded; mirroring is a convenience.
+      // A full or disabled localStorage must not stop somebody issuing a book. The
+      // session is the thing being recorded; mirroring is a convenience.
     }
   }
 
-  // Restore first, so a reload does not silently empty the register in front of
+  // Restored first, so a reload does not silently empty the register in front of
   // whoever is using it.
   try {
     const saved = localStorage.getItem('library-local:v1')
@@ -160,10 +168,7 @@ function installLocalMirror(target: LibraryApi, source: MockApi) {
     handle?.()
   }
 
-  return {
-    api,
-    handle: { flush },
-  }
+  return { api, handle: { flush } }
 }
 
 /** Forgets the mirror and reloads. How you recover from an unreadable copy. */

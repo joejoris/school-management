@@ -3,9 +3,10 @@
 Record book issues, deadlines, returns and fines for the school library. Built for
 a phone at the desk, and for a tablet when there is time to sit down.
 
-**This is the frontend.** It runs entirely in the browser against an in-memory
-store, and every rule is enforced. The database is the next piece of work, and the
-seam it plugs into is already in place.
+The default build runs entirely in the browser against an in-memory store, and
+every rule is enforced. A Supabase backend now exists — schema, RLS and a client —
+but **it has never been run**. See `supabase/README.md`, which says exactly what has
+been checked and what has not, and gives you a way to check the rest yourself.
 
 ---
 

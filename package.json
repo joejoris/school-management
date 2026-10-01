@@ -12,8 +12,9 @@
     "dev": "npm run dev --workspace @library/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
-    "check": "npm run typecheck && npm run test",
-    "prove": "node tools/prove-guards.mjs"
+    "check": "npm run typecheck && npm run test && npm run check:sql",
+    "prove": "node tools/prove-guards.mjs",
+    "check:sql": "node tools/check-sql.mjs"
   },
   "engines": {
     "node": ">=22.18"
