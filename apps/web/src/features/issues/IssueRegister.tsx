@@ -25,6 +25,7 @@ import { LOAN_FILTERS, type LoanFilter, type LoanRow } from '@library/contracts'
 import { api } from '../../api'
 import { Button, Card, Field, Input, cn } from '../../components/ui'
 import { Search, TriangleAlert } from '../../components/icons'
+import { LoanActions } from './LoanActions'
 
 const date = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { dateStyle: 'medium' }) : '—'
@@ -166,6 +167,17 @@ export function IssueRegister() {
                       </>
                     ) : null}
                   </dl>
+
+                  {/*
+                    Only while the book is actually out. On a returned loan the four
+                    buttons would all be refused by the domain, and a row of buttons
+                    that always say no is worse than no buttons.
+                  */}
+                  {r.status === 'active' ? (
+                    <div className="mt-3 border-t border-border pt-3">
+                      <LoanActions loanId={r.loanId} />
+                    </div>
+                  ) : null}
                 </Card>
               </li>
             ))}
@@ -184,6 +196,9 @@ export function IssueRegister() {
                       {h}
                     </th>
                   ))}
+                  <th scope="col" className="px-3 py-2.5 font-medium">
+                    Actions
+                  </th>
                 </tr>
               </thead>
               <tbody>
@@ -198,6 +213,9 @@ export function IssueRegister() {
                     <td className="numeric px-3 py-2 whitespace-nowrap">{date(r.dueAt)}</td>
                     <td className="numeric px-3 py-2 whitespace-nowrap">
                       {r.returnedAt ? date(r.returnedAt) : <Status r={r} />}
+                    </td>
+                    <td className="px-3 py-2">
+                      {r.status === 'active' ? <LoanActions loanId={r.loanId} /> : null}
                     </td>
                   </tr>
                 ))}

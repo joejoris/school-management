@@ -33,6 +33,16 @@ export function BookPlus({ className, ...p }: IconProps) {
   )
 }
 
+export function Library({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <rect x="3" y="4" width="5" height="16" rx="1" />
+      <rect x="10" y="4" width="5" height="16" rx="1" />
+      <path d="m17 5 4 14M21 5l-4 14" />
+    </svg>
+  )
+}
+
 export function TableIcon({ className, ...p }: IconProps) {
   return (
     <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
@@ -66,6 +76,14 @@ export function Search({ className, ...p }: IconProps) {
     <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
       <circle cx="11" cy="11" r="7" />
       <path d="m20 20-3.5-3.5" />
+    </svg>
+  )
+}
+
+export function Plus({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-4'} aria-hidden>
+      <path d="M12 5v14M5 12h14" />
     </svg>
   )
 }

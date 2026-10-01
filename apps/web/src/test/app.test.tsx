@@ -721,3 +721,305 @@ describe('the sidebar pops up', () => {
     expect(await screen.findByRole('heading', { name: /issue register/i })).toBeInTheDocument()
   })
 })
+
+/*
+ * The catalogue.
+ *
+ * It exists because without it the app cannot do its one job: issuing a book means
+ * typing a barcode, a barcode has to already be on file, and nothing could put one
+ * there. Everything downstream — the register, returns, fines — was implemented,
+ * tested and unreachable.
+ */
+describe('the catalogue', () => {
+  test('it says so plainly when there are no books', async () => {
+    await mountSignedIn('/catalogue')
+    // Not an error. A new library has no books, and that is the normal state on the
+    // first day rather than something that has gone wrong.
+    expect(await screen.findByText(/the catalogue is empty/i)).toBeInTheDocument()
+  })
+
+  test('a book can be added, with its copies', async () => {
+    const { user } = await mountSignedIn('/catalogue')
+    await screen.findByRole('heading', { name: /^catalogue$/i })
+
+    await user.click(screen.getByRole('button', { name: /add a book/i }))
+    await user.type(screen.getByLabelText(/^title$/i), 'Things We Carry')
+    await user.type(screen.getByLabelText(/^author$/i), 'Tim O’Brien')
+    await user.clear(screen.getByLabelText(/^copies$/i))
+    await user.type(screen.getByLabelText(/^copies$/i), '3')
+    await user.click(screen.getByRole('button', { name: /add the book/i }))
+
+    expect(await screen.findByText('Things We Carry')).toBeInTheDocument()
+    expect(screen.getByText(/3 of 3 available/i)).toBeInTheDocument()
+  })
+
+  test('the button stays unavailable until there is a title and an author', async () => {
+    const { user } = await mountSignedIn('/catalogue')
+    await screen.findByRole('heading', { name: /^catalogue$/i })
+
+    await user.click(screen.getByRole('button', { name: /add a book/i }))
+    const add = screen.getByRole('button', { name: /add the book/i })
+    expect(add).toBeDisabled()
+
+    await user.type(screen.getByLabelText(/^title$/i), 'Things We Carry')
+    // A title with no author is a shelf nobody can find things on.
+    expect(add).toBeDisabled()
+
+    await user.type(screen.getByLabelText(/^author$/i), 'Tim O’Brien')
+    expect(add).toBeEnabled()
+  })
+
+  test('a copy count of zero is not accepted', async () => {
+    const { user } = await mountSignedIn('/catalogue')
+    await screen.findByRole('heading', { name: /^catalogue$/i })
+
+    await user.click(screen.getByRole('button', { name: /add a book/i }))
+    await user.type(screen.getByLabelText(/^title$/i), 'A Title')
+    await user.type(screen.getByLabelText(/^author$/i), 'An Author')
+    await user.clear(screen.getByLabelText(/^copies$/i))
+
+    const add = screen.getByRole('button', { name: /add the book/i })
+    // A title with no copies can never be issued, so accepting it produces a book
+    // that exists and cannot be lent — the exact state this screen exists to avoid.
+    expect(add).toBeDisabled()
+    await user.type(screen.getByLabelText(/^copies$/i), '0')
+    expect(add).toBeDisabled()
+  })
+
+  test('the individual copies are listed, not just a count', async () => {
+    // The copy is what gets issued and its number is on the spine, so a count alone
+    // does not tell a librarian which book to walk to.
+    const { user } = await mountSignedIn('/catalogue', () =>
+      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 2 }),
+    )
+    await screen.findByText('Things We Carry')
+
+    await user.click(screen.getByRole('button', { name: /things we carry/i }))
+
+    const barcodes = await screen.findAllByText(/^BK-\d{4}-\d{4}$/)
+    expect(barcodes).toHaveLength(2)
+  })
+
+  test('more copies can be added to a title that already has some', async () => {
+    const { user } = await mountSignedIn('/catalogue', () =>
+      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 }),
+    )
+    await screen.findByText('Things We Carry')
+
+    await user.click(screen.getByRole('button', { name: /things we carry/i }))
+
+    // Cleared first: the field starts at "1", and typing into it appends. This
+    // produced "12", added twelve copies, and failed an assertion about three.
+    const field = screen.getByLabelText(/copies to add/i)
+    await waitFor(() => expect(field).toHaveValue('1'))
+    await user.clear(field)
+    await user.type(field, '2')
+
+    await user.click(screen.getByRole('button', { name: /^add$/i }))
+
+    expect(await screen.findByText(/3 of 3 available/i)).toBeInTheDocument()
+  })
+
+  test('availability is in words, not just a fraction to divide', async () => {
+    await mountSignedIn('/catalogue', () =>
+      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 3 }),
+    )
+    // "0/3" needs doing arithmetic to interpret, and the arithmetic decides whether
+    // the librarian looks for another copy or checks the shelf.
+    expect(await screen.findByText(/3 of 3 available/i)).toBeInTheDocument()
+  })
+
+  test('search finds a book by author as well as by title', async () => {
+    const { user } = await mountSignedIn('/catalogue', () =>
+      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 }),
+    )
+    await screen.findByText('Things We Carry')
+
+    await user.type(screen.getByLabelText(/^search$/i), 'O’Brien')
+    expect(await screen.findByText('Things We Carry')).toBeInTheDocument()
+
+    await user.clear(screen.getByLabelText(/^search$/i))
+    await user.type(screen.getByLabelText(/^search$/i), 'nothing like this')
+    expect(await screen.findByText(/nothing matches that search/i)).toBeInTheDocument()
+  })
+})
+
+describe('circulation at the desk', () => {
+  /*
+   * Scoped to the table.
+   *
+   * The register renders two layouts — stacked cards for a phone, a table for a wide
+   * screen — and picks between them with a CSS media query. jsdom has no media
+   * queries, so both are in the document at once and "the Return button" matches
+   * two of them.
+   *
+   * Rendering both and letting CSS decide is the right shape for a layout that
+   * differs structurally rather than just visually. So the tests pick one, and say
+   * which.
+   */
+  const desk = () => within(screen.getByRole('table'))
+
+  /**
+   * A library with a student and a book, arranged before the first render so every
+   * screen's first paint already knows about them.
+   */
+  async function stocked(path = '/') {
+    return mountSignedIn(path, async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+        form: 'Form 4',
+        grade: '11',
+      })
+      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+    })
+  }
+
+  const firstBarcode = async () => {
+    const page = await api.searchTitles({ limit: 10, offset: 0 })
+    const detail = await api.getTitle(page.items[0]!.id)
+    return detail.copies[0]!.barcode
+  }
+
+  /** Issues the one book to the one student, through the entry form. */
+  async function lend(user: ReturnType<typeof userEvent.setup>) {
+    await screen.findByRole('heading', { name: /record a book issue/i })
+    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+    await user.type(screen.getByLabelText(/book number/i), await firstBarcode())
+    await user.click(screen.getByRole('button', { name: /record issue/i }))
+    await screen.findByText(/^recorded\./i)
+  }
+
+  /*
+   * The test that would have caught the thing the catalogue and these actions exist
+   * to fix. Before them the app could record an issue for a brand-new student and do
+   * nothing else: no book existed to issue, and no screen could bring one back.
+   * Every part had tests; the app had none of the thing anybody actually needs.
+   */
+  test('a book goes out and comes back, through the screens', async () => {
+    const { user } = await stocked('/')
+    await lend(user)
+
+    await user.click(screen.getByRole('link', { name: /register/i }))
+    await screen.findByRole('heading', { name: /issue register/i })
+
+    await user.click(desk().getByRole('button', { name: /^return$/i }))
+    await user.selectOptions(screen.getByLabelText(/condition/i), 'fair')
+    await user.click(screen.getByRole('button', { name: /record the return/i }))
+
+    /*
+     * The book leaves the "on loan" view, so the table goes with it.
+     *
+     * The register opens on what is out now — somebody who has just returned a book
+     * is history, and history has its own filter. So there is nothing left to show
+     * and the empty state is the correct outcome, not a failure to find the row.
+     */
+    expect(await screen.findByText(/no books are out/i)).toBeInTheDocument()
+
+    // And the loan is still there, under "returned", with its return date.
+    await user.click(screen.getByRole('radio', { name: /^returned$/i }))
+    expect(await desk().findByText('Kept Student')).toBeInTheDocument()
+
+    const loans = await api.listLoans({ limit: 10, offset: 0, status: 'returned' })
+    expect(loans.items).toHaveLength(1)
+    expect(loans.items[0]!.returnedAt).not.toBeNull()
+  })
+
+  test('a book on loan is unavailable, and a returned one is available again', async () => {
+    const { user } = await stocked('/catalogue')
+    // Nothing is out yet, so the copy is on the shelf.
+    expect(await screen.findByText(/1 of 1 available/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('link', { name: /record issue/i }))
+    await lend(user)
+
+    await user.click(screen.getByRole('link', { name: /catalogue/i }))
+    expect(await screen.findByText(/0 of 1 available/i)).toBeInTheDocument()
+
+    await user.click(screen.getByRole('link', { name: /register/i }))
+    await screen.findByRole('heading', { name: /issue register/i })
+    await user.click(desk().getByRole('button', { name: /^return$/i }))
+    await user.click(screen.getByRole('button', { name: /record the return/i }))
+    await screen.findByText(/no books are out/i)
+
+    await user.click(screen.getByRole('link', { name: /catalogue/i }))
+    expect(await screen.findByText(/1 of 1 available/i)).toBeInTheDocument()
+  })
+
+  test('a void needs a reason, and keeps it in the register', async () => {
+    const { user } = await stocked('/')
+    await lend(user)
+
+    await user.click(screen.getByRole('link', { name: /register/i }))
+    await screen.findByRole('heading', { name: /issue register/i })
+
+    await user.click(desk().getByRole('button', { name: /^void$/i }))
+    // An unexplained void is indistinguishable from a deletion, which is the thing
+    // voiding exists to prevent.
+    expect(screen.getByRole('button', { name: /void it/i })).toBeDisabled()
+
+    await user.type(screen.getByLabelText(/reason/i), 'wrong admission number')
+    await user.click(screen.getByRole('button', { name: /void it/i }))
+
+    /*
+     * The loan leaves the open view too — a voided loan is not one that is out — so
+     * the reason is checked under the Void filter, which is where an auditor would
+     * look for it. The point of keeping a void is the reason attached to it; a
+     * reason nobody can find is the same as no reason.
+     */
+    await user.click(screen.getByRole('radio', { name: /^void$/i }))
+    expect(await desk().findByText(/wrong admission number/i)).toBeInTheDocument()
+    expect(await desk().findByText(/voided/i)).toBeInTheDocument()
+
+    // The book went back on the shelf, which is the whole point of voiding.
+    const loans = await api.listLoans({ limit: 10, offset: 0, status: 'void' })
+    expect(loans.items).toHaveLength(1)
+    const copy = await api.findCopyByBarcode(loans.items[0]!.barcode)
+    expect(copy?.status).toBe('on_shelf')
+  })
+
+  test('the actions are absent once a loan is closed', async () => {
+    const { user } = await stocked('/')
+    await lend(user)
+
+    // Four buttons the domain would refuse every time is worse than none.
+    await user.click(screen.getByRole('link', { name: /register/i }))
+    await screen.findByRole('heading', { name: /issue register/i })
+    expect(desk().getByRole('button', { name: /^return$/i })).toBeInTheDocument()
+
+    await user.click(desk().getByRole('button', { name: /^return$/i }))
+    await user.click(screen.getByRole('button', { name: /record the return/i }))
+
+    // Gone from the open view, because it is no longer out.
+    expect(await screen.findByText(/no books are out/i)).toBeInTheDocument()
+
+    // And absent from history too, which is the part worth checking: a closed loan
+    // is a record, not something still offering four buttons the domain refuses.
+    await user.click(screen.getByRole('radio', { name: /^returned$/i }))
+    await desk().findByText('Kept Student')
+    expect(desk().queryByRole('button', { name: /^return$/i })).not.toBeInTheDocument()
+    expect(desk().queryByRole('button', { name: /^void$/i })).not.toBeInTheDocument()
+    expect(desk().queryByRole('button', { name: /^renew$/i })).not.toBeInTheDocument()
+  })
+
+  test('a renewal limit is reported as a sentence, not a silent failure', async () => {
+    const { user } = await stocked('/')
+    await lend(user)
+
+    await user.click(screen.getByRole('link', { name: /register/i }))
+    await screen.findByRole('heading', { name: /issue register/i })
+
+    // A student may renew twice, so the third press is the one that must be refused
+    // — in words the librarian reads, because "renewal_limit_reached" tells nobody
+    // anything.
+    for (let i = 0; i < 2; i++) {
+      await user.click(desk().getByRole('button', { name: /^renew$/i }))
+      await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument())
+    }
+
+    await user.click(desk().getByRole('button', { name: /^renew$/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/renewed as many times/i)
+  })
+})
