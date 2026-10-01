@@ -10,7 +10,11 @@
  * the only strongly coloured thing on the page and carries no instructions, so the
  * eye goes to the school first and the form second. On a narrow screen the left
  * panel shrinks to a header strip rather than disappearing — the school name is
- * how somebody confirms they are on the right system before typing a password.
+ * how somebody confirms they are on the right register before typing a password.
+ *
+ * There is no product name anywhere on this screen. The school is the identity;
+ * a brand the librarian has never heard of would be asking them a question at the
+ * moment they are deciding whether to trust the thing.
  *
  * ── Two screens, one component ──────────────────────────────────────
  *
@@ -144,22 +148,33 @@ export function SetupPanel({
               className="pointer-events-none absolute -right-20 -bottom-24 size-72 rounded-full bg-fuchsia-300/10 blur-3xl"
             />
 
+            {/*
+              The school, and only the school.
+
+              This started as a product name above a generic subtitle, which was
+              wrong in a way that is easy to miss: a librarian signing in at a school
+              counter is not logging in to a product, they are opening their school's
+              register. Naming a brand they have never heard of, on the one screen
+              where they are deciding whether to trust this, invites the question
+              "who is this for?" at exactly the wrong moment.
+
+              So the school name is the wordmark, and it is the largest text on the
+              page. Nothing competes with it.
+            */}
             <div className="relative flex flex-col items-center gap-3 lg:items-start">
               <SchoolLogo size={56} />
-              {/* "Libra" is the product; the school is who it is for. */}
               <p
-                className="text-3xl font-extrabold tracking-tight text-white"
+                className="text-2xl font-extrabold leading-tight tracking-tight text-balance text-white sm:text-3xl"
                 style={{ fontFamily: '"Plus Jakarta Sans", Inter, system-ui, sans-serif' }}
               >
-                Libra
+                Dandora Secondary School
               </p>
-              <p className="text-sm text-white/70">Library Management System</p>
             </div>
 
             <div className="relative flex flex-col gap-5 text-center lg:text-left">
               <div className="flex flex-col gap-2">
                 <h1 className="text-xl font-semibold tracking-tight text-white sm:text-2xl">
-                  Welcome to Dandora Secondary School
+                  Welcome to the school library
                 </h1>
                 <p className="text-sm text-white/70">
                   Record book issues, deadlines and returns from any phone at the desk.

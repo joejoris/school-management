@@ -258,11 +258,23 @@ describe('the gate at /', () => {
     expect(screen.getByRole('tab', { name: /create account/i })).toBeInTheDocument()
   })
 
-  test('the welcome names the school', async () => {
+  test('the school is the identity, and no product name competes with it', async () => {
     mount('/')
-    expect(
-      await screen.findByRole('heading', { name: /welcome to dandora secondary school/i }),
-    ).toBeInTheDocument()
+    await screen.findByText(/no accounts exist yet/i)
+
+    expect(await screen.findByRole('heading', { name: /welcome to the school library/i })).toBeInTheDocument()
+
+    // The school name is on the screen, and it is the largest text there is.
+    const wordmark = screen.getByText('Dandora Secondary School')
+    expect(wordmark).toBeInTheDocument()
+
+    // An earlier version of this screen put a product name above a generic
+    // subtitle. A librarian at a school counter is opening their school's
+    // register, not logging in to a product — and a brand they have never heard of,
+    // on the one screen where they decide whether to trust this, is a bad thing to
+    // put in front of them.
+    expect(screen.queryByText('Libra')).not.toBeInTheDocument()
+    expect(screen.queryByText(/library management system/i)).not.toBeInTheDocument()
   })
 
   test('the crest is labelled, so it is not read as a decorative blob', async () => {
