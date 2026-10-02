@@ -220,14 +220,22 @@ create table if not exists loans (
   condition_out copy_condition not null default 'good',
   condition_in  copy_condition,
   notes         text,
-  created_at    timestamptz not null default now(),
-
-  -- One open loan per copy. Enforced in the database rather than in the interface
-  -- because issuing the same physical book to two students is the one mistake in
-  -- this system that cannot be undone.
-  constraint one_open_loan_per_copy
-    unique (copy_id) where status = 'active'
+  created_at    timestamptz not null default now()
 );
+
+-- One open loan per copy, as a partial unique index.
+--
+-- This was a `unique (copy_id) where status = 'active'` table constraint until the
+-- editor refused it: **Postgres has no partial UNIQUE constraint.** A table constraint
+-- can only be a column list, and filtering by a predicate is possible only in
+-- `CREATE UNIQUE INDEX`. The index below is exactly equivalent and is where the rule
+-- now lives.
+--
+-- It is here rather than in the interface because issuing the same physical book to
+-- two students is the one mistake in this system that cannot be undone. `issue_book`
+-- checks it too, but a check that reads before writing loses a race; this cannot.
+create unique index if not exists loans_one_open_per_copy_idx
+  on loans (copy_id) where status = 'active';
 
 -- Append-only history. Separate from the loan so the register can answer "when was
 -- this renewed and by whom" without the loan row carrying a history in JSON.
@@ -350,12 +358,23 @@ stable
 security definer
 set search_path = public
 as $$
-  select nullif(
-    coalesce(
-      current_setting('request.jwt.claims', true)::jsonb ->> 'sub',
-      (nullif(current_setting('request.jwt.claim.sub', true), ''))::jsonb ->> 'sub'
-    ),
-    ''
+  -- Two ways Supabase passes the caller's identity, and both are handled:
+  --   request.jwt.claims      a JSON object   {"sub":"...","role":"anon"}
+  --   request.jwt.claim.sub   the bare subject
+  --
+  -- The bare setting is tried first because it needs no cast. This function had it
+  -- second, wrapped as `(nullif(current_setting('request.jwt.claim.sub', true), ''))::jsonb`
+  -- -- and a UUID such as 9f1c... is not valid JSON, so that raises
+  -- `invalid input syntax for type json`.
+  --
+  -- It stayed quiet only because `request.jwt.claims` is set first and satisfied the
+  -- coalesce, so the broken branch was never taken. Every RLS policy calls `can()`,
+  -- which calls this, so a single request arriving with only the older setting would
+  -- have failed every table in the schema with a JSON parse error that says nothing
+  -- about what actually went wrong.
+  select coalesce(
+    nullif(current_setting('request.jwt.claim.sub', true), ''),
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub'
   )::uuid
 $$;
 

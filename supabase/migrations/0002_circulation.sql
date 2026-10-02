@@ -477,29 +477,45 @@ set search_path = public
 as $$
 declare
   v_total int;
-  v_assessed int;
-  v_kind fine_status;
 begin
   select coalesce(sum(t.amount), 0)::int into v_total
     from fine_txns t where t.fine_id = p_fine_id;
 
   update fines
      set balance = greatest(v_total, 0)
-   where id = p_fine_id
-  returning status, kind into v_kind, v_assessed;
+   where id = p_fine_id;
 
-  -- Waived stays waived even once the ledger nets to zero, or a waiver would
-  -- quietly become "paid" and stop being distinguishable from one.
-  if v_kind <> 'waived' then
-    update fines
-       set status = case
-                      when greatest(v_total, 0) = 0 then 'paid'::fine_status
-                      when v_total < (select assessed_amount from fines where id = p_fine_id)
-                        then 'partially_paid'::fine_status
-                      else 'outstanding'::fine_status
-                    end
-     where id = p_fine_id;
-  end if;
+  -- The status is derived from the ledger, never incremented, because an increment
+  -- drifts and a drifted balance is a balance that lies.
+  --
+  -- greatest(v_total, 0) is compared here for the same reason it is stored: a refund
+  -- on top of a charge can net below zero, and that is money returned rather than a
+  -- fine that has been paid. Reading the same number the stored balance uses is what
+  -- stops the status and the balance disagreeing about the same fine.
+  --
+  -- Two things were wrong here before the editor saw this file, and both were in the
+  -- declaration rather than the logic:
+  --
+  --   v_kind was declared fine_status but fed fines.kind, which is fine_kind. The two
+  --   enums share no labels -- kind is overdue/lost/damage/other, status is
+  --   outstanding/partially_paid/paid/waived -- so the assignment raised
+  --   "invalid input value for enum fine_status: overdue" on every call. That is every
+  --   payment, every waiver and every nightly accrual charge: the whole money side.
+  --   The message names a type the application never mentions, so nothing on screen
+  --   would have pointed at it.
+  --
+  --   The guard meant to keep a waiver a waiver compared that value against 'waived',
+  --   which was comparing a fine's *kind* to a *status*. The intent is now expressed
+  --   where it belongs, as a condition on the update.
+  update fines
+     set status = case
+                    when greatest(v_total, 0) = 0 then 'paid'::fine_status
+                    when v_total < (select assessed_amount from fines where id = p_fine_id)
+                      then 'partially_paid'::fine_status
+                    else 'outstanding'::fine_status
+                  end
+   where id = p_fine_id
+     and status <> 'waived'::fine_status;
 end
 $$;
 
