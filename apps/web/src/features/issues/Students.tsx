@@ -284,12 +284,24 @@ function FineLedger({
         // Entered in shillings, stored in cents. The conversion happens once, here,
         // at the edge — the ledger is integer cents everywhere else.
         const cents = Math.round(Number(amount) * 100)
-        if (!Number.isFinite(cents) || cents <= 0) throw new Error('Enter an amount more than nothing.')
-        if (cents > open.balance) throw new Error('That is more than they owe.')
-        await api.recordPayment({ fineId: open.id, amountCents: cents })
+        const paid = await api.recordPayment({ fineId: open.id, amountCents: cents })
+        /*
+         * Checked, and the duplicate checks above it deleted.
+         *
+         * This used to re-state two of the domain's rules here — "more than nothing"
+         * and "not more than they owe" — and await the result without looking at it.
+         * That worked only because a refusal arrived as a thrown error, which the
+         * mutation's error handler caught. Now it arrives as a value, so an unchecked
+         * await would close the dialog and report success for a payment the database
+         * refused.
+         *
+         * One rule in one place: the domain decides, the screen shows its sentence.
+         */
+        if (!paid.ok) throw new Error(paid.message)
       } else {
-        if (reason.trim().length === 0) throw new Error('A waiver needs a reason.')
-        await api.waiveFine({ fineId: open.id, reason: reason.trim() })
+        const waived = await api.waiveFine({ fineId: open.id, reason: reason.trim() })
+        // Same. A waiver with no reason is the refusal a school hits most often.
+        if (!waived.ok) throw new Error(waived.message)
       }
     },
     onSuccess: async () => {

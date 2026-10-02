@@ -166,6 +166,81 @@ const deletes = [...sql.matchAll(/create policy\s+\w+\s+on\s+\w+[\s\S]{0,120}?fo
 if (deletes.length) fail(`${deletes.length} delete policies — nothing in this system deletes`)
 else pass('no delete policy anywhere')
 
+// ── 7. the SQL's refusals exist in the contract ─────────────────────
+//
+// Cross-checked by reading both files, because a refusal code invented in SQL and
+// never added to `packages/contracts/src/refusals.ts` is invisible at runtime: the
+// function returns a code, the client casts it, and the screen's switch has no case
+// for it — so the sentence a librarian would have read is never shown.
+//
+// This exact drift happened while writing `issued_in_future`. It is a check that
+// cannot need a database, and it cannot be left to review.
+console.log('\n  refusal codes')
+
+const contractSrc = stripComments(readFileSync('packages/contracts/src/refusals.ts', 'utf8'))
+const unions = [
+  ...contractSrc.matchAll(/export const (\w*Refusal) = \[([\s\S]*?)\]/g),
+].map((m) => ({
+  name: m[1],
+  codes: new Set([...m[2].matchAll(/'([a-z_]+)'/g)].map((c) => c[1])),
+}))
+const knownCodes = new Set(unions.flatMap((u) => [...u.codes]))
+
+if (knownCodes.size === 0) fail('no refusal codes found in the contract — has the shape changed?')
+else {
+  pass(`${knownCodes.size} refusal codes in the contract, across ${unions.length} unions`)
+
+  // Every code the SQL functions can return.
+  const sqlCodes = new Map()
+  for (const m of sql.matchAll(/'code',\s*'([a-z_]+)'/g)) {
+    if (!sqlCodes.has(m[1])) sqlCodes.set(m[1], sql.slice(0, m.index).split('\n').length)
+  }
+
+  const orphans = [...sqlCodes.keys()].filter((c) => !knownCodes.has(c))
+  if (orphans.length) {
+    for (const c of orphans) {
+      fail(`SQL returns refusal '${c}', which is not in any contract union — a screen will have no case for it`)
+    }
+  } else {
+    pass(`all ${sqlCodes.size} SQL refusal codes are in the contract`)
+  }
+
+  /*
+   * And the other direction, which is a failure rather than a note.
+   *
+   * A code in a union that nothing can return is a promise the type makes and the
+   * system breaks. Somebody will eventually write a screen case for it, with a
+   * sentence in it, and it will be dead code that reads as though it were reachable.
+   *
+   * Three were found here and all three were dead: `unpaid_fines` and
+   * `member_not_borrower` were duplicate names for rules that exist under different
+   * names (`fine_blocked`, `member_suspended`), and `too_soon_to_renew` was a rule
+   * nobody had implemented. Removed rather than implemented — inventing a circulation
+   * rule to justify a type member would be the wrong fix.
+   *
+   * `forbidden` is the exception: it arrives from several functions that have no result
+   * shape of their own and raise instead.
+   */
+  const unreachable = [...knownCodes].filter((c) => !sqlCodes.has(c) && c !== 'forbidden')
+  if (unreachable.length) {
+    for (const c of unreachable) {
+      fail(`'${c}' is in a contract union but no SQL function returns it — nothing can ever produce it`)
+    }
+  } else {
+    pass(`every contract code is reachable from a SQL function (${knownCodes.size} of them)`)
+  }
+}
+
+// The refusal copy. Every code in a union needs a sentence, or a screen that renders
+// `message` shows nothing at all for that case.
+const messageBlock = contractSrc.slice(contractSrc.indexOf('REFUSAL_MESSAGES'))
+const withoutCopy = [...knownCodes].filter((c) => !new RegExp(`\\b${c}:`).test(messageBlock))
+if (withoutCopy.length) {
+  for (const c of withoutCopy) fail(`'${c}' has no sentence in REFUSAL_MESSAGES — a screen would render nothing`)
+} else {
+  pass(`every refusal code has a sentence (${knownCodes.size} of them)`)
+}
+
 console.log(bad === 0 ? '\n  reading found nothing wrong.\n' : `\n  ${bad} problems found.\n`)
 
 console.log(

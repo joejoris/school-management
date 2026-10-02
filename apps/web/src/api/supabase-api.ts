@@ -71,6 +71,11 @@ import type {
   UpdateMemberInput,
   UpdateMemberTypeInput,
   User,
+  VoidRefusal,
+  VoidResult,
+  PaymentRefusal,
+  PaymentResult,
+  FineDetail,
   WaiveFineInput,
 } from '@library/contracts'
 
@@ -469,13 +474,25 @@ export class SupabaseApi implements LibraryApi {
     return { ok: true, loan, holdPromoted: false }
   }
 
-  async voidLoan(loanId: string, reason: string): Promise<Loan> {
+  /**
+   * Voiding a loan.
+   *
+   * Returns a refusal rather than throwing, because `void_loan` can refuse for three
+   * ordinary reasons — no reason given, already closed, no such loan — and a void is
+   * something a librarian does deliberately. A refusal that arrives as an exception
+   * reads as a fault, and they would press it again.
+   */
+  async voidLoan(loanId: string, reason: string): Promise<VoidResult> {
     const res = await this.rpc<{ ok: boolean; code?: string; message?: string; loan_id?: string }>('void_loan', {
       p_loan_id: loanId,
       p_reason: reason,
     })
-    if (!res.ok) throw new SupabaseRefusal(res.code ?? 'refused', res.message ?? 'That did not work.')
-    return this.one<Loan>('loans', res.loan_id!)
+    if (res.ok) return { ok: true, loan: await this.one<Loan>('loans', res.loan_id!) }
+    return {
+      ok: false,
+      refusal: (res.code ?? 'not_found') as VoidRefusal,
+      message: res.message ?? 'That did not work.',
+    }
   }
 
   /**
@@ -683,25 +700,56 @@ export class SupabaseApi implements LibraryApi {
     return ledger.find((f) => f.id === fine.id)!
   }
 
-  async waiveFine(input: WaiveFineInput): Promise<import('@library/contracts').FineDetail> {
+  /**
+   * Waiving a fine.
+   *
+   * A returned refusal rather than a throw, for the same reason as the rest: a waiver
+   * with no reason is the refusal a school hits most, and told as an exception it
+   * reads as a fault rather than as a rule.
+   */
+  async waiveFine(input: WaiveFineInput): Promise<PaymentResult> {
     const res = await this.rpc<{ ok: boolean; code?: string; message?: string }>('waive_fine', {
       p_fine_id: input.fineId,
       p_reason: input.reason,
     })
-    if (!res.ok) throw new SupabaseRefusal(res.code ?? 'refused', res.message ?? 'That did not work.')
-    const fines = await this.getFines({ limit: 200, offset: 0 })
-    return fines.items.find((f) => f.id === input.fineId)!
+    if (!res.ok) {
+      return {
+        ok: false,
+        refusal: (res.code ?? 'not_found') as PaymentRefusal,
+        message: res.message ?? 'That did not work.',
+      }
+    }
+    const fine = await this.refetchFine(input.fineId)
+    return { ok: true, fine }
   }
 
-  async recordPayment(input: RecordPaymentInput): Promise<import('@library/contracts').FineDetail> {
+  async recordPayment(input: RecordPaymentInput): Promise<PaymentResult> {
     const res = await this.rpc<{ ok: boolean; code?: string; message?: string }>('record_payment', {
       p_fine_id: input.fineId,
       p_amount: input.amountCents,
       p_reason: input.reason ?? null,
     })
-    if (!res.ok) throw new SupabaseRefusal(res.code ?? 'refused', res.message ?? 'That did not work.')
-    const fines = await this.getFines({ limit: 200, offset: 0 })
-    return fines.items.find((f) => f.id === input.fineId)!
+    if (!res.ok) {
+      return {
+        ok: false,
+        refusal: (res.code ?? 'not_found') as PaymentRefusal,
+        message: res.message ?? 'That did not work.',
+      }
+    }
+    return { ok: true, fine: await this.refetchFine(input.fineId) }
+  }
+
+  /**
+   * The fine as it now stands, after the function has changed it.
+   *
+   * Re-read rather than trusted from the function's return, because the function only
+   * reports what it did — the new balance and status come from the same read the
+   * register would do, so the screen cannot show a number the database disagrees with.
+   */
+  private async refetchFine(fineId: string): Promise<FineDetail> {
+    const found = (await this.getFines({ limit: 200, offset: 0 })).items.find((f) => f.id === fineId)
+    if (!found) throw new SupabaseRefusal('not_found', 'That fine could not be found.')
+    return found
   }
 
   async runAccrual(now?: string): Promise<{ assessed: number; totalCents: number }> {

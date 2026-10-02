@@ -40,6 +40,7 @@ import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { FORM_SUGGESTIONS, GRADE_SUGGESTIONS } from '@library/contracts'
 import { api } from '../../api'
+import { isFutureLocalDay, startOfLocalDay, todayLocal } from '../../lib/dates'
 import { Button, Card, CardContent, Field, Input, cn } from '../../components/ui'
 import { BookPlus, TriangleAlert } from '../../components/icons'
 
@@ -56,7 +57,19 @@ interface Draft {
   dueDate: string
 }
 
-const today = () => new Date().toISOString().slice(0, 10)
+/*
+ * "Today" is the reader's own calendar day.
+ *
+ * This used to be `new Date().toISOString().slice(0, 10)`, which is **UTC**. West of
+ * Greenwich that is already tomorrow for part of every evening, and the day typed
+ * into the form was then read back as *local* — so a book taken "today" was stamped
+ * eight hours into the future and `returnLoan` refused it with "A book cannot come
+ * back before it went out." Every return button in the app was dead, and the domain
+ * was right to refuse: the book genuinely had not gone out yet.
+ *
+ * The reasoning is in lib/dates.ts, and there is a test that fails without this.
+ */
+const today = () => todayLocal()
 
 const emptyDraft = (): Draft => ({
   memberCode: '',
@@ -112,11 +125,33 @@ export function RecordIssue() {
 
   const save = useMutation({
     mutationFn: async () => {
+      /*
+       * A day in the future is refused here, at the field that caused it.
+       *
+       * It has to be. A loan stamped for next week is a loan that cannot be returned
+       * until next week, and the person who typed it has no way to tell that from a
+       * broken application — they pressed Record and nothing happened for a week.
+       * Told here, they are looking at the date they typed and can fix it.
+       */
+      if (draft.dateTaken && isFutureLocalDay(draft.dateTaken)) {
+        throw new Error('A book cannot be taken out on a date that has not happened yet.')
+      }
+
       const result = await api.checkout({
         memberCode: draft.memberCode.trim(),
         barcode: draft.barcode.trim(),
         dueAt: draft.dueDate || undefined,
-        checkedOutAt: draft.dateTaken ? new Date(`${draft.dateTaken}T08:00:00`).toISOString() : undefined,
+        /*
+         * Local midnight of the typed day, not 08:00.
+         *
+         * The `T08:00:00` this replaced was a fiction: "taken today" was stored as
+         * "taken at eight in the morning" whatever the time actually was, so for the
+         * first eight hours of every day a book taken today could not be returned
+         * until eight the next morning. Midnight is the earliest instant the typed
+         * day could have been, which makes the impossible ordering — returned before
+         * it went out — unreachable rather than merely unlikely.
+         */
+        checkedOutAt: draft.dateTaken ? startOfLocalDay(draft.dateTaken) : undefined,
         studentName: draft.studentName.trim() || undefined,
         form: draft.form || undefined,
         stream: draft.stream || undefined,

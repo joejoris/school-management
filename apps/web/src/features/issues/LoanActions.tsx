@@ -65,9 +65,19 @@ export function LoanActions({ loanId }: { loanId: string }) {
           if (!result.ok) throw new Error(result.message)
           return
         }
-        case 'void':
-          await api.voidLoan(loanId, reason.trim())
+        case 'void': {
+          const result = await api.voidLoan(loanId, reason.trim())
+          /*
+           * The same shape as the two cases above it.
+           *
+           * This used to be the one action that could only fail by throwing, so a void
+           * with no reason reached the error box as an exception while a return with a
+           * bad condition reached it as a sentence — two failure shapes for the same
+           * kind of mistake, and neither one better for the person reading it.
+           */
+          if (!result.ok) throw new Error(result.message)
           return
+        }
         case 'lost':
           await api.markLost(loanId, reason.trim())
           return

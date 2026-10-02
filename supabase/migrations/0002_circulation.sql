@@ -287,6 +287,26 @@ begin
   select * into v_member from members where id = v_loan.member_id;
   select * into v_type from member_types where key = v_member.type;
 
+  /*
+   * A date that has not happened yet.
+   *
+   * Refused here rather than accepted, because a loan stamped for a future day is a
+   * loan that cannot be returned until that day: `return_book` will correctly refuse
+   * it with "cannot come back before it went out", and the person at the desk would
+   * be looking at a book that left weeks ago and will not come back. Told now, they
+   * are still looking at the date field and can fix it.
+   *
+   * Five minutes of slack, because a browser and a database never quite agree on the
+   * clock and refusing a loan issued "now" would be a maddening intermittent fault.
+   * The slack is generous enough for clock drift and not generous enough to be worth
+   * exploiting.
+   */
+  if v_at > now() + interval '5 minutes' then
+    return jsonb_build_object('ok', false, 'code', 'issued_in_future',
+      'message', 'A book cannot go out on a date that has not happened yet.',
+      'overridable', false);
+  end if;
+
   if v_member.status <> 'active' then
     return jsonb_build_object('ok', false, 'code', 'member_suspended',
       'message', 'That student is not active.');

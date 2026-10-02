@@ -39,7 +39,7 @@ import type {
   User,
 } from './entities.ts'
 import type { CopyCondition, CopyStatus, MemberStatus, Role, UserStatus } from './enums.ts'
-import type { CheckoutResult, RenewResult, ReturnResult } from './refusals.ts'
+import type { CheckoutResult, PaymentResult, RenewResult, ReturnResult, VoidResult } from './refusals.ts'
 import type { Page, PageQuery } from './page.ts'
 
 // ── Queries ─────────────────────────────────────────────────────────
@@ -312,7 +312,16 @@ export interface LibraryApi {
    * Requires a written reason. A void with no reason is indistinguishable from a
    * deletion, which is the thing this exists to prevent.
    */
-  voidLoan(loanId: string, reason: string): Promise<Loan>
+  /**
+   * Voiding a loan.
+   *
+   * Was `Promise<Loan>`, which could not express a refusal at all. The database can
+   * refuse this with `not_found`, `not_active` or `reason_required`, and with a
+   * return type that has no room for a refusal the only way to report one was to
+   * throw. Its three siblings in the same switch statement return a sentence, so the
+   * desk was handling two different failure shapes for the same kind of mistake.
+   */
+  voidLoan(loanId: string, reason: string): Promise<VoidResult>
 
   /** The issue register, school-wide. */
   listLoans(query: LoanQuery): Promise<Page<LoanRow>>
@@ -327,9 +336,16 @@ export interface LibraryApi {
   // ── Fines ──────────────────────────────────────────────────
   getFines(query?: FineQuery): Promise<Page<FineDetail>>
   getFineLedger(memberId: string): Promise<FineDetail[]>
-  /** Always audited. Always carries a reason. */
-  waiveFine(input: WaiveFineInput): Promise<FineDetail>
-  recordPayment(input: RecordPaymentInput): Promise<FineDetail>
+  /**
+   * Waiving a fine, and taking a payment.
+   *
+   * Both were `Promise<FineDetail>`, which cannot express a refusal. Each can refuse
+   * for ordinary reasons a school will hit by accident — an amount of zero, more than
+   * is outstanding, a fine already settled, a waiver with no reason — and all of those
+   * were reaching the fines screen as thrown errors rather than as sentences.
+   */
+  waiveFine(input: WaiveFineInput): Promise<PaymentResult>
+  recordPayment(input: RecordPaymentInput): Promise<PaymentResult>
   assessFine(input: AssessFineInput): Promise<FineDetail>
   /**
    * The nightly accrual, exposed as a callable.

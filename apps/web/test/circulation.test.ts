@@ -311,10 +311,22 @@ describe('returning', () => {
     )
     if (!issued.ok) return assert.fail('setup failed')
 
-    await assert.rejects(
-      () => as(() => desk.returnLoan({ loanId: issued.loan.id, conditionIn: 'good', returnedAt: '2026-09-18T08:00:00.000Z' })),
-      DomainRefusalError,
+    /*
+     * A returned refusal, not a thrown error.
+     *
+     * This used to be `assert.rejects(..., DomainRefusalError)`, because
+     * `ReturnRefusal` had no value for this case — there was nowhere to return one to,
+     * so throwing was the only thing the type allowed. Now the refusal is a value like
+     * every other one, and the code and the copy are both checked, which is what the
+     * screens actually consume.
+     */
+    const back = await as(() =>
+      desk.returnLoan({ loanId: issued.loan.id, conditionIn: 'good', returnedAt: '2026-09-18T08:00:00.000Z' }),
     )
+    assert.equal(back.ok, false)
+    if (back.ok) return
+    assert.equal(back.refusal, 'returned_before_issued')
+    assert.equal(back.message, REFUSAL_MESSAGES.returned_before_issued)
   })
 })
 
@@ -340,7 +352,32 @@ describe('voiding', () => {
     const issued = await as(() => desk.checkout({ memberCode: 'S001', barcode: copy.barcode }))
     if (!issued.ok) return assert.fail('setup failed')
 
-    await assert.rejects(() => as(() => desk.voidLoan(issued.loan.id, '   ')), DomainRefusalError)
+    /*
+     * A returned refusal rather than a thrown error, for the reason the other two
+     * actions on the same switch statement return one: `voidLoan` had no result shape
+     * to put a refusal in, so this is what it was doing instead.
+     */
+    const result = await as(() => desk.voidLoan(issued.loan.id, '   '))
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.refusal, 'reason_required')
+    assert.equal(result.message, REFUSAL_MESSAGES.reason_required)
+  })
+
+  test('a loan that is already closed cannot be voided, and says which state it is in', async () => {
+    const { copy } = await scene()
+    const issued = await as(() => desk.checkout({ memberCode: 'S001', barcode: copy.barcode }))
+    if (!issued.ok) return assert.fail('setup failed')
+
+    const back = await as(() => desk.returnLoan({ loanId: issued.loan.id, conditionIn: 'good' }))
+    assert.equal(back.ok, true)
+
+    const result = await as(() => desk.voidLoan(issued.loan.id, 'recorded in error'))
+    assert.equal(result.ok, false)
+    if (result.ok) return
+    assert.equal(result.refusal, 'not_active')
+    // "Cannot be voided" alone sends somebody hunting the register to work out why.
+    assert.match(result.message, /not open any more/i)
   })
 
   test('a voided loan stops counting against the limit', async () => {
@@ -458,31 +495,61 @@ describe('fines', () => {
     const fine = await as(() => desk.assessFine({ memberId: member.id, kind: 'other', amountCents: 500 }))
     assert.equal(fine.balance, 500)
 
-    await assert.rejects(() => as(() => desk.waiveFine({ fineId: fine.id, reason: '' })), DomainRefusalError)
+    /*
+     * Returned refusals, not exceptions.
+     *
+     * These three were `assert.rejects` because the return types had nowhere to put a
+     * refusal. Both are now values, and the code and the copy are asserted — which is
+     * what a screen actually reads, and what `assert.rejects` never checked.
+     */
+    const noReason = await as(() => desk.waiveFine({ fineId: fine.id, reason: '' }))
+    assert.equal(noReason.ok, false)
+    if (!noReason.ok) {
+      assert.equal(noReason.refusal, 'reason_required')
+      assert.equal(noReason.message, REFUSAL_MESSAGES.reason_required)
+    }
 
     const waived = await as(() => desk.waiveFine({ fineId: fine.id, reason: 'school responsibility' }))
-    assert.equal(waived.balance, 0)
-    assert.equal(waived.status, 'waived')
+    assert.equal(waived.ok, true)
+    if (!waived.ok) return
+    assert.equal(waived.fine.balance, 0)
+    assert.equal(waived.fine.status, 'waived')
     // The charge is still there. A fine that vanished has no explanation.
-    assert.equal(waived.transactions.length, 2)
+    assert.equal(waived.fine.transactions.length, 2)
+
+    // And a settled fine cannot be settled again — the mistake that would otherwise
+    // produce a second waiver with nothing to say what it was for.
+    const again = await as(() => desk.waiveFine({ fineId: fine.id, reason: 'on reflection' }))
+    assert.equal(again.ok, false)
+    if (!again.ok) assert.equal(again.refusal, 'already_settled')
   })
 
   test('a payment reduces the balance and cannot exceed it', async () => {
     const { member } = await scene()
     const fine = await as(() => desk.assessFine({ memberId: member.id, kind: 'other', amountCents: 500 }))
 
-    await assert.rejects(
-      () => as(() => desk.recordPayment({ fineId: fine.id, amountCents: 600 })),
-      DomainRefusalError,
-    )
-    await assert.rejects(
-      () => as(() => desk.recordPayment({ fineId: fine.id, amountCents: 0 })),
-      DomainRefusalError,
-    )
+    const tooMuch = await as(() => desk.recordPayment({ fineId: fine.id, amountCents: 600 }))
+    assert.equal(tooMuch.ok, false)
+    if (!tooMuch.ok) {
+      assert.equal(tooMuch.refusal, 'too_much')
+      assert.equal(tooMuch.message, REFUSAL_MESSAGES.too_much)
+    }
+
+    const nothing = await as(() => desk.recordPayment({ fineId: fine.id, amountCents: 0 }))
+    assert.equal(nothing.ok, false)
+    if (!nothing.ok) {
+      assert.equal(nothing.refusal, 'bad_amount')
+      // The sentence says shillings, because that is the unit the librarian types in
+      // and cents is what is stored. Saying "greater than zero" would not connect the
+      // number they typed to the number that was refused.
+      assert.match(nothing.message, /shillings/i)
+    }
 
     const paid = await as(() => desk.recordPayment({ fineId: fine.id, amountCents: 200 }))
-    assert.equal(paid.balance, 300)
-    assert.equal(paid.status, 'partially_paid')
+    assert.equal(paid.ok, true)
+    if (!paid.ok) return
+    assert.equal(paid.fine.balance, 300)
+    assert.equal(paid.fine.status, 'partially_paid')
   })
 
   test('an outstanding fine blocks borrowing past the threshold', async () => {

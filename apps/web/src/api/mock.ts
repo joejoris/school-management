@@ -64,7 +64,7 @@ import type {
 import { CHECKABLE_COPY_STATUSES, paginate } from '@library/contracts'
 import { can, deny } from '@library/contracts'
 import { REFUSAL_MESSAGES, OVERRIDABLE, DomainRefusalError } from '@library/contracts'
-import type { CheckoutRefusal } from '@library/contracts'
+import type { CheckoutRefusal, PaymentResult, VoidResult } from '@library/contracts'
 
 const DAY = 86_400_000
 
@@ -484,10 +484,21 @@ export class MockApi implements LibraryApi {
       return { ok: false, refusal: 'already_returned', message: REFUSAL_MESSAGES.already_returned }
     }
     const returnedAt = input.returnedAt ?? this.now()
-    // A return that predates the issue is rejected rather than stored: the two
-    // dates would make the loan unborrowable for its whole life.
+    /*
+     * A return that predates the issue is refused, not stored.
+     *
+     * This used to throw. It was the only refusal in this function that did, and the
+     * reason was a gap in the contract rather than a decision: `ReturnRefusal` had no
+     * value for it, so there was nowhere to return one to. The gap is now closed and
+     * the sentence lives with the other sentences.
+     *
+     * It happens in practice: a loan stamped for a day that has not arrived cannot be
+     * closed until that day. Which is why the entry form refuses a future date when
+     * the issue is recorded, rather than creating a loan and leaving the return to
+     * fail days later with nothing for the librarian to act on.
+     */
     if (Date.parse(returnedAt) < Date.parse(loan.checkedOutAt)) {
-      throw new DomainRefusalError('A book cannot come back before it went out.')
+      return { ok: false, refusal: 'returned_before_issued', message: REFUSAL_MESSAGES.returned_before_issued }
     }
     loan.status = 'returned'
     loan.returnedAt = returnedAt
@@ -519,24 +530,26 @@ export class MockApi implements LibraryApi {
     return this.markLost(loanId, _reason)
   }
 
-  async voidLoan(loanId: string, reason: string): Promise<Loan> {
+  async voidLoan(loanId: string, reason: string): Promise<VoidResult> {
     this.need('loans.void')
     // A void with no reason is indistinguishable from a deletion, which is the
     // thing this exists to prevent. It is the first question anyone will ask.
     if (!reason.trim()) {
-      throw new DomainRefusalError('A void needs a reason. It is the first thing anyone will ask.')
+      return { ok: false, refusal: 'reason_required', message: REFUSAL_MESSAGES.reason_required }
     }
     const loan = this.db.loans.find((l) => l.id === loanId)
-    if (!loan) throw new DomainRefusalError('No such loan record.')
+    if (!loan) return { ok: false, refusal: 'not_found', message: REFUSAL_MESSAGES.not_found }
     if (loan.status !== 'active') {
-      throw new DomainRefusalError(`Only an active loan can be voided; that one is ${loan.status}.`)
+      // The state is named, because "cannot be voided" on its own sends somebody
+      // hunting through the register to work out why.
+      return { ok: false, refusal: 'not_active', message: REFUSAL_MESSAGES.not_active }
     }
     loan.status = 'void'
     loan.voidReason = reason
     loan.voidedAt = this.now()
     const copy = this.db.copies.find((c) => c.id === loan.copyId)
     if (copy) copy.status = 'on_shelf'
-    return loan
+    return { ok: true, loan }
   }
 
   async listActiveLoans(memberId: string): Promise<Loan[]> {
@@ -957,33 +970,35 @@ export class MockApi implements LibraryApi {
     return this.detailFor(fine)
   }
 
-  async waiveFine(input: WaiveFineInput): Promise<FineDetail> {
+  async waiveFine(input: WaiveFineInput): Promise<PaymentResult> {
     this.need('fines.write')
     if (!input.reason.trim()) {
-      throw new DomainRefusalError('Waiving a fine needs a reason. It is the first question asked.')
+      return { ok: false, refusal: 'reason_required', message: REFUSAL_MESSAGES.reason_required }
     }
     const fine = this.db.fines.find((f) => f.id === input.fineId)
-    if (!fine) throw new DomainRefusalError('No such fine.')
-    if (fine.balance <= 0) throw new DomainRefusalError('That fine is already settled.')
+    if (!fine) return { ok: false, refusal: 'not_found', message: REFUSAL_MESSAGES.not_found }
+    if (fine.balance <= 0) {
+      return { ok: false, refusal: 'already_settled', message: REFUSAL_MESSAGES.already_settled }
+    }
     // A waiver is a ledger entry, not an edit. A fine with no explanation for
     // disappearing is the thing auditors look for.
     this.addTxn(fine.id, 'waiver', -fine.balance, input.reason)
     fine.status = 'waived'
-    return this.detailFor(fine)
+    return { ok: true, fine: this.detailFor(fine) }
   }
 
-  async recordPayment(input: RecordPaymentInput): Promise<FineDetail> {
+  async recordPayment(input: RecordPaymentInput): Promise<PaymentResult> {
     this.need('fines.write')
     const fine = this.db.fines.find((f) => f.id === input.fineId)
-    if (!fine) throw new DomainRefusalError('No such fine.')
+    if (!fine) return { ok: false, refusal: 'not_found', message: REFUSAL_MESSAGES.not_found }
     if (!Number.isInteger(input.amountCents) || input.amountCents <= 0) {
-      throw new DomainRefusalError('A payment must be a whole number of shillings, more than zero.')
+      return { ok: false, refusal: 'bad_amount', message: REFUSAL_MESSAGES.bad_amount }
     }
     if (input.amountCents > fine.balance) {
-      throw new DomainRefusalError('That is more than the outstanding balance.')
+      return { ok: false, refusal: 'too_much', message: REFUSAL_MESSAGES.too_much }
     }
     this.addTxn(fine.id, 'payment', -input.amountCents, input.reason)
-    return this.detailFor(fine)
+    return { ok: true, fine: this.detailFor(fine) }
   }
 
   /**
