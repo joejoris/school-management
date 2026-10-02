@@ -1,8 +1,16 @@
 # Connecting the frontend to Supabase
 
-**None of the SQL here has ever been run.** There is no database in this repository's
-history, and the machine this was written on cannot reach one. Read this file as
-"here is what to try", not "here is what works".
+**None of the SQL here has ever been run.** This is not a formality — it was checked
+against a live project with the public anon key, signed out, and every table and
+function came back `PGRST205` / `PGRST202`: not in the schema cache. The database is
+empty.
+
+That is at least safe. An empty schema holds nothing to leak, so the anon key — which
+is public by design and ships inside the browser bundle — currently carries no data at
+all. It stops being true the moment these migrations are applied, which is what the
+grants at the bottom of `0003` are for.
+
+Read this file as "here is what to try", not "here is what works".
 
 Four files, run in order, in the Supabase dashboard's **SQL Editor**:
 
