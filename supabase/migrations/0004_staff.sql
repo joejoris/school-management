@@ -121,6 +121,27 @@ grant execute on function active_admin_count() to authenticated;
 grant execute on function set_user_status(uuid, user_status) to authenticated;
 grant execute on function set_user_role(uuid, role) to authenticated;
 
+-- And take it away from anon again, which looks redundant and is not.
+--
+-- 0003 revokes every routine in this schema from anon. It cannot revoke what does not
+-- exist yet, and these three functions are created *after* that line -- so without
+-- this they inherit Postgres's default of EXECUTE granted to PUBLIC, and PUBLIC
+-- includes anon. The grants above narrow nothing on their own: a grant adds to whatever
+-- is already permitted rather than replacing it.
+--
+-- Each of the three starts with can('users.write'), which is false for anonymous, so a
+-- call would be refused on its first line. That is defence in depth rather than an open
+-- door, and defence in depth is the point: the rule should still hold if somebody later
+-- edits the check out of one of them.
+--
+-- Written as three explicit revokes rather than a blanket one because 0003's blanket
+-- revoke already runs and a second `in schema public` revoke here would have nothing
+-- left to remove. Any migration added *after* this one must repeat this step, and that
+-- is the part worth remembering: Postgres gives every new function to PUBLIC.
+revoke all on function active_admin_count() from anon;
+revoke all on function set_user_status(uuid, user_status) from anon;
+revoke all on function set_user_role(uuid, role) from anon;
+
 -- The policies below are for the *row*, not for the rule: they let an administrator
 -- reach these rows at all. The decision about whether a particular change is
 -- allowed happens inside the functions above.

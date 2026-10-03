@@ -90,12 +90,42 @@ if (/revoke insert, update, delete on loans\s+from authenticated/i.test(sql)) {
 
 // ── 3. anon holds nothing but one function ────────────────────────────
 console.log('\n  the anon role')
-if (/revoke all on all tables\s+from anon/i.test(sql)) pass('all table privileges revoked from anon')
-else fail('anon is not revoked from all tables')
-if (/revoke all on all functions from anon/i.test(sql)) {
-  pass('all function privileges revoked from anon')
+if (/revoke all on all tables\s+in schema public\s+from anon/i.test(sql)) pass('all table privileges revoked from anon')
+else if (/revoke all on all tables\s+from anon/i.test(sql)) {
+  // The MySQL spelling. Postgres rejects it, and the SQL Editor said so:
+  //   ERROR: 42601: syntax error at or near "from"
+  fail("`REVOKE ALL ON ALL TABLES FROM anon` is MySQL's spelling — Postgres needs IN SCHEMA public")
 } else {
-  fail('anon is not revoked from all functions — every function would be callable by the public key')
+  fail('anon is not revoked from all tables')
+}
+if (/revoke all on all routines\s+in schema public\s+from anon/i.test(sql)) {
+  pass('all routine privileges revoked from anon')
+} else if (/revoke all on all functions\s+from anon/i.test(sql)) {
+  fail('`REVOKE ALL ON ALL FUNCTIONS FROM anon` is MySQL\'s spelling — Postgres needs IN SCHEMA public, and ROUTINES is the modern word')
+} else {
+  fail('anon is not revoked from all routines — every function would be callable by the public key')
+}
+
+/*
+ * And one Postgres behaviour no grep for a revoke can catch.
+ *
+ * `CREATE FUNCTION` grants EXECUTE to PUBLIC by default, and PUBLIC includes anon. So
+ * every function created *after* the blanket revoke above is executable by the public
+ * key again — and `GRANT ... TO authenticated` does not fix that, because a grant adds
+ * to what is already permitted rather than replacing it.
+ *
+ * This file (0004) is exactly that case: it creates three functions after 0003 revoked.
+ * Each is protected by a can() check on its first line, so a call would be refused —
+ * but the rule should not depend on somebody remembering to keep those checks.
+ */
+const revokeLine = (sql.match(/revoke all on all routines\s+in schema public\s+from anon/i) || [])[0]
+if (revokeLine) {
+  const anonGrantPerFunction = [...sql.matchAll(/revoke all on function ([\w]+)\([^)]*\) from anon/gi)]
+  if (anonGrantPerFunction.length) {
+    pass(`${anonGrantPerFunction.length} function(s) created after the blanket revoke are revoked from anon individually`)
+  } else if (/create or replace function/i.test(sql)) {
+    console.log('     · no per-function revoke from anon after the blanket one — any function created later is PUBLIC-executable')
+  }
 }
 
 const anonCalls = [...sql.matchAll(/grant execute on function[\s\S]{0,200}?\bto\b[^;]*\banon\b[^;]*;/gi)].map((g) =>
@@ -239,6 +269,43 @@ if (withoutCopy.length) {
   for (const c of withoutCopy) fail(`'${c}' has no sentence in REFUSAL_MESSAGES — a screen would render nothing`)
 } else {
   pass(`every refusal code has a sentence (${knownCodes.size} of them)`)
+}
+
+// ── 8. every permission a policy checks actually exists ──────────────
+//
+// Cross-checked against packages/contracts/src/permissions.ts, which is the same table
+// the interface uses.
+//
+// A misspelling here fails silently and completely: the policy is valid SQL, RLS is
+// enabled, the query returns no rows, and the reason is that `can('members.red')`
+// returns false for every role including admin. Nothing errors. The application would
+// look like it had no data and no permissions, which is the hardest kind of fault to
+// trace back to a single character.
+console.log('\n  permissions in the policies')
+
+const permissionSrc = stripComments(readFileSync('packages/contracts/src/permissions.ts', 'utf8'))
+const knownPermissions = new Set([...permissionSrc.matchAll(/'([a-z][a-z_.]+)'/g)].map((m) => m[1]))
+const usedPermissions = new Set([...sql.matchAll(/can\('([a-z_.]+)'\)/g)].map((m) => m[1]))
+
+if (knownPermissions.size === 0) fail('no permissions found in the contract — has the shape changed?')
+else if (usedPermissions.size === 0) fail('no policy calls can() — is every table readable by every signed-in role?')
+else {
+  const unknown = [...usedPermissions].filter((p) => !knownPermissions.has(p))
+  if (unknown.length) {
+    for (const p of unknown) {
+      fail(`policies check can('${p}'), which is not in the contract — can() returns false for every role, so the table is silently unreadable`)
+    }
+  } else {
+    pass(`all ${usedPermissions.size} permissions checked by policies exist in the contract`)
+  }
+
+  // The reverse is information, not a fault: loans.checkout and friends are checked
+  // inside the functions rather than by a policy, because they decide whether a write
+  // happens at all rather than which rows a signed-in role may see.
+  const policyOnly = [...knownPermissions].filter(
+    (p) => !usedPermissions.has(p) && !/^(loans\.(checkout|return|void|renew)|fines\.write|reports\.run)$/.test(p),
+  )
+  if (policyOnly.length) console.log(`     checked by the functions, not by a policy: ${policyOnly.join(', ')}`)
 }
 
 console.log(bad === 0 ? '\n  reading found nothing wrong.\n' : `\n  ${bad} problems found.\n`)
