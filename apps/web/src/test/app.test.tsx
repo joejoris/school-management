@@ -909,8 +909,22 @@ describe('circulation at the desk', () => {
    * to fix. Before them the app could record an issue for a brand-new student and do
    * nothing else: no book existed to issue, and no screen could bring one back.
    * Every part had tests; the app had none of the thing anybody actually needs.
+   *
+   * The explicit timeout is because this test is genuinely the heaviest in the file:
+   * it mounts the application, stocks a library, issues through the entry form, walks to
+   * the register, opens a return dialog, chooses a condition, records it, switches to
+   * the returned filter and reads the row back. That is a little under three seconds of
+   * jsdom on an idle machine, against a default budget of five.
+   *
+   * It timed out at 10s once, on a machine sitting at 99% CPU from an unrelated runaway
+   * process, and passed at 2.9s immediately afterwards. So this is not masking a
+   * regression -- it is removing a margin that was too thin to survive a busy machine.
+   *
+   * Raised on this one test rather than globally, because a global bump would let every
+   * slower test hide behind it, and a suite that passes by taking longer is worse than
+   * one that occasionally says so.
    */
-  test('a book goes out and comes back, through the screens', async () => {
+  test('a book goes out and comes back, through the screens', { timeout: 20_000 }, async () => {
     const { user } = await stocked('/')
     await lend(user)
 
