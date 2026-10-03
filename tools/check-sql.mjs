@@ -308,6 +308,73 @@ else {
   if (policyOnly.length) console.log(`     checked by the functions, not by a policy: ${policyOnly.join(', ')}`)
 }
 
+/*
+ * Untyped literals handed to a polymorphic function.
+ *
+ * `to_jsonb` is to_jsonb(anyelement). Postgres has to settle the argument's type before
+ * it can pick an implementation, and a bare string literal is `unknown` -- so
+ * `to_jsonb('Dandora Secondary School')` raises
+ *
+ *   ERROR: 42804: could not determine polymorphic type because input has type unknown
+ *
+ * and nothing else in the file says why. This exact line sat in the seed section of
+ * 0003 and cost three attempts on that migration: two rounds went into the policy loops
+ * above, which were rewritten and turned out not to be the cause. Two integer literals on
+ * either side were harmless, because `25` and `2000` are integers and not unknown, so
+ * only the school name was ever broken.
+ *
+ * The rule: a bare string or `null` literal passed to any polymorphic built-in needs a
+ * cast. `ARRAY[...]` needs one too, which is why the one remaining loop in 0003 carries
+ * an explicit `::text[]`.
+ */
+console.log('\n  untyped literals into polymorphic functions')
+
+// (anyelement, anyarray, any, variadic "any") — built-ins that cannot choose an
+// implementation until the argument type is settled.
+/*
+ * Which of these are proven, and which are reasoned?
+ *
+ * `to_jsonb('...')` is PROVEN. It is the actual cause of 0003 failing three times, so
+ * the pattern and the fix are both known rather than guessed.
+ *
+ * The others are reasoned from how Postgres resolves polymorphic arguments, and one of
+ * them -- `array[...]` -- fires falsely on `permission = any (array['a','b'])`. There the
+ * operator `=` supplies the type for the array's elements, so the literals are never
+ * unknown at the point the cast would be applied. That exclusion is the second version
+ * of this rule; the first flagged three perfectly good lines in `can()` and would have
+ * been ignored, which is the fate of a check that cries wolf.
+ */
+const POLYMORPHIC = [
+  ['to_jsonb', /\bto_jsonb\s*\(\s*'/gi],
+  ['jsonb_build_object', /\bjsonb_build_object\s*\([^)]*'\s*,\s*null\s*[),]/gi],
+  ['jsonb_build_array', /\bjsonb_build_array\s*\(\s*'/gi],
+  // Any array literal that is NOT the right-hand side of a comparison operator. An
+  // operator resolves its own argument types; a polymorphic function does not.
+  ['array[...]', /(?<!any\s\()(?<!=\s)\barray\s*\[\s*'[^']*'\s*(,|\])/gi],
+]
+
+let untyped = 0
+for (const [what, re] of POLYMORPHIC) {
+  for (const m of sql.matchAll(re)) {
+    const line = sql.slice(0, m.index).split('\n').length
+    // A cast in the same call settles the type, which is the fix.
+    const window = sql.slice(m.index, m.index + 120)
+    if (/::[a-z]/.test(window)) continue
+    fail(`${what} at line ${line} is given an untyped literal — add a cast, or Postgres raises 42804 "could not determine polymorphic type"`)
+    untyped++
+  }
+}
+if (untyped === 0) {
+  pass('every argument to a polymorphic function is typed')
+}
+
+// Also: a `foreach ... in array` needs the array's element type settled too.
+for (const m of sql.matchAll(/foreach\s+\w+\s+in\s+array\s+(array\s*\[[\s\S]{0,400}?\])\s*(loop|::)/gi)) {
+  if (!/::/.test(m[1] + m[0])) {
+    fail('a FOREACH ... IN ARRAY over an untyped array literal — FOREACH goes through array_lower/array_upper, which are polymorphic')
+  }
+}
+
 console.log(bad === 0 ? '\n  reading found nothing wrong.\n' : `\n  ${bad} problems found.\n`)
 
 console.log(

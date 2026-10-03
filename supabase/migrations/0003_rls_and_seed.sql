@@ -349,7 +349,19 @@ insert into settings (key, value) values
   -- 25 cents a day, in cents, because every money column is an integer.
   ('fine.defaultDailyRateCents', to_jsonb(25)),
   ('fine.maxPerFineCents',       to_jsonb(2000)),
-  ('school.name',                to_jsonb('Dandora Secondary School'))
+  -- The cast is not decoration, and this was the cause of
+  --   ERROR: 42804: could not determine polymorphic type because input has type unknown
+  -- which this file raised three times while the actual cause sat here in the seed,
+  -- two hundred lines below the policies I spent that time rewriting.
+  --
+  -- to_jsonb is polymorphic: to_jsonb(anyelement). Postgres must settle what type the
+  -- argument is before it can choose an implementation, and a bare string literal is
+  -- `unknown` -- exactly the type named in the error. The two integer literals are fine,
+  -- because 25 and 2000 are integer literals rather than unknown ones, which is why two
+  -- of the three rows were never a problem and only the school name was.
+  --
+  -- `::text` settles it. The value stored is a JSON string either way.
+  ('school.name',                to_jsonb('Dandora Secondary School'::text))
 on conflict (key) do nothing;
 
 -- No accounts are seeded. The first librarian is created through the sign-in screen,
