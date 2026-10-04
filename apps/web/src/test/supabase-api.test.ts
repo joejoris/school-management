@@ -25,7 +25,7 @@
  * could say about it.
  */
 import { describe, test, expect } from 'vitest'
-import { camelize, SupabaseApi, SupabaseRefusal } from '../api/supabase-api'
+import { camelize, SupabaseApi, SupabaseRefusal, type SupabaseAuth } from '../api/supabase-api'
 
 /** Everything a stubbed call recorded, so a test can assert on the request. */
 interface Recorded {
@@ -62,6 +62,42 @@ function stub(responses: { json?: unknown; status?: number; headers?: Record<str
   return { impl, calls }
 }
 
+
+
+/*
+ * One factory rather than eleven inline constructions.
+ *
+ * `SupabaseConfig` gained an `auth` field and all eleven stopped compiling at once.
+ * That is the argument for a factory: a field added to a constructor should be one edit
+ * here rather than eleven scattered ones, and the next field will be too.
+ *
+ * The stub Auth is also what lets auth itself be tested without a project. `token` is
+ * the whole difference between "nobody is signed in" and "somebody is", as far as this
+ * client is concerned.
+ *
+ * The token may be a value or a function, because one test needs it to change between
+ * requests -- that is the one proving a captured token would have expired, and a factory
+ * that only took a value could not express it.
+ */
+function makeApi(
+  token: string | null | (() => string | null) = null,
+  overrides: Partial<SupabaseAuth> = {},
+): SupabaseApi {
+  const read = typeof token === 'function' ? token : () => token
+  return new SupabaseApi({
+    url: 'https://project.supabase.co',
+    anonKey: 'the-anon-key',
+    accessToken: async () => read(),
+    auth: {
+      signUp: async () => ({ id: null, session: false, error: null }),
+      signIn: async () => ({ id: null, error: null }),
+      signOut: async () => undefined,
+      userId: async () => ((await read()) ? 'u_signed_in' : null),
+      restore: async () => undefined,
+      ...overrides,
+    },
+  })
+}
 
 describe('snake_case becomes camelCase', () => {
   test('at the top level', () => {
@@ -100,11 +136,7 @@ describe('issuing a book', () => {
       { json: { ok: true, loan_id: 'l_1', due_at: '2026-10-04T08:00:00Z' } },
       { json: [{ id: 'l_1', member_id: 'm_1', copy_id: 'c_1', status: 'active' }] },
     ])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => 'session-token',
-    })
+    const api = makeApi('session-token')
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -125,11 +157,7 @@ describe('issuing a book', () => {
     const s = stub([
       { json: { ok: false, code: 'limit_exceeded', message: 'That student is already at their borrowing limit.', overridable: true } },
     ])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -150,11 +178,7 @@ describe('issuing a book', () => {
 
   test('the anon key is sent even with no session, so the sign-in screen can work', async () => {
     const s = stub([{ json: true }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'the-anon-key',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -171,11 +195,7 @@ describe('issuing a book', () => {
   test('a session token is used when there is one, and read fresh each time', async () => {
     let token = 'first-token'
     const s = stub([{ json: true }, { json: true }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => token,
-    })
+    const api = makeApi(() => token)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -204,11 +224,7 @@ describe('a page of rows', () => {
         headers: { 'Content-Range': '0-1/137' },
       },
     ])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -225,11 +241,7 @@ describe('a page of rows', () => {
 
   test('hasMore is false on the last page', async () => {
     const s = stub([{ json: [{ id: 'a' }], headers: { 'Content-Range': '0-0/1' } }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -244,11 +256,7 @@ describe('a page of rows', () => {
 describe('finding a student', () => {
   test('the admission number is matched exactly, never case-insensitively', async () => {
     const s = stub([{ json: [] }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -266,11 +274,7 @@ describe('finding a student', () => {
 describe('when the database cannot be reached', () => {
   test('the failure is not dressed up as a policy refusal', async () => {
     const s = stub([{ status: 500, text: 'connection refused' }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -285,11 +289,7 @@ describe('when the database cannot be reached', () => {
 
   test('a 404 says so, rather than claiming the network is down', async () => {
     const s = stub([{ status: 404, text: 'not found' }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -301,11 +301,7 @@ describe('when the database cannot be reached', () => {
 
   test('the refusal carries a code a caller can branch on', async () => {
     const s = stub([{ status: 500, text: '' }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {
@@ -322,11 +318,7 @@ describe('when the database cannot be reached', () => {
 describe('switching a member of staff off', () => {
   test('goes through a function, because a policy cannot say "not yourself"', async () => {
     const s = stub([{ json: { ok: false, code: 'self', message: 'You cannot switch off your own account.' } }])
-    const api = new SupabaseApi({
-      url: 'https://project.supabase.co',
-      anonKey: 'k',
-      accessToken: async () => null,
-    })
+    const api = makeApi(null)
     const real = globalThis.fetch
     globalThis.fetch = s.impl as never
     try {

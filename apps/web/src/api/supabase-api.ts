@@ -119,21 +119,43 @@ export class SupabaseRefusal extends Error {
   }
 }
 
+/**
+ * Supabase Auth, behind an interface.
+ *
+ * ── Why an interface rather than importing supabase-js here ────────────
+ *
+ * Because the rest of this file speaks plain PostgREST over `fetch` and can be tested
+ * against a stub, and importing the SDK for one corner would make the whole client
+ * untestable without a project. Auth is the part that genuinely needs the SDK — session
+ * refresh, token rotation, the confirmation flow — so it is the part that gets one.
+ *
+ * The seam is four methods and an id. `tools/verify-live.mjs` implements it without a
+ * browser so the whole system can be exercised end to end from a terminal.
+ */
+export interface SupabaseAuth {
+  /** Creates the credential. `session` is false when the project requires email confirmation. */
+  signUp(email: string, password: string): Promise<{ id: string | null; session: boolean; error: string | null }>
+  signIn(email: string, password: string): Promise<{ id: string | null; error: string | null }>
+  signOut(): Promise<void>
+  /** The signed-in account's uuid, or null. */
+  userId(): Promise<string | null>
+  /**
+   * Puts a previously held session back.
+   *
+   * Needed because `signUp` replaces the browser's session. Without this, an administrator
+   * appointing a librarian would be signed out as themselves by the act of creating the
+   * other account, and would have to type their password again. See `createUser`.
+   */
+  restore(accessToken: string, refreshToken: string): Promise<void>
+}
+
 export interface SupabaseConfig {
   url: string
   anonKey: string
-  /**
-   * Supabase Auth's current session token.
-   *
-   * Asynchronous because `getSession()` is, and it is read fresh on every request
-   * rather than captured once: a captured token expires, and an expired token
-   * produces an RLS refusal that looks exactly like a permissions bug.
-   *
-   * With no session it returns null, and the request is sent as `anon` — which is
-   * how the sign-in screen can ask `has_any_accounts()` before anybody has signed
-   * in, and how the RLS then correctly refuses everything else.
-   */
+  /** Supabase Auth session, from supabase-js. */
   accessToken(): Promise<string | null>
+  /** Supabase Auth itself. See `SupabaseAuth`. */
+  auth: SupabaseAuth
 }
 
 export class SupabaseApi implements LibraryApi {
@@ -296,49 +318,187 @@ export class SupabaseApi implements LibraryApi {
     return Boolean(await this.rpc<boolean>('has_any_accounts'))
   }
 
+  /**
+   * The signed-in account, as our `users` row.
+   *
+   * Two things have to be true for this to return anybody: a session, and a *profile*
+   * whose id is that session's uuid. A session with no profile means somebody signed in
+   * through Supabase Auth but was never appointed here — a person with credentials and
+   * no role — and there is nothing they are allowed to do, so this is null rather than a
+   * half-built user object.
+   */
   async currentUser(): Promise<User | null> {
-    // No session, no profile. Asking anyway would come back as an RLS refusal that
-    // reads like a permissions bug rather than like "nobody is signed in".
-    if (!(await this.cfg.accessToken())) return null
+    const id = await this.cfg.auth.userId()
+    if (!id) return null
     try {
-      // The profile row, joined to Auth's own claims for the email and name.
-      const rows = await this.rest<User[]>('users', { query: { select: '*', limit: 1 } })
+      // By id, not "the first row". Reading `users?limit=1` would return whichever profile
+      // sorts first, which for a signed-in librarian is whoever happens to be earliest in
+      // the table — possibly somebody else entirely.
+      const rows = await this.list<User>('users', { id: `eq.${id}`, limit: 1 })
       return rows[0] ?? null
     } catch (e) {
-      // A session that exists but has no profile is signed out as far as this app is
-      // concerned — there is nothing they may do.
       if (e instanceof SupabaseRefusal) return null
       throw e
     }
   }
 
+  /**
+   * The first administrator, created through the setup screen.
+   *
+   * Two steps, and the order matters.
+   *
+   * Supabase Auth creates the *credential* — the hashed password lives in Auth's tables
+   * and nowhere in this schema, which has no password column and must not grow one. Then
+   * `set_up_library` creates our *profile* row, using the uuid Auth just handed back.
+   *
+   * That uuid is the whole point. `current_user_id()` reads the JWT's `sub`, and
+   * `current_role_name()` looks up `users` by that id. An earlier version created the
+   * profile without an id, so the table invented one and the two could never match: the
+   * librarian was set up, the message said so, and every permission they had was false.
+   *
+   * The first account is an administrator whatever it asks for. Somebody must be able to
+   * create the others, and letting the first sign-up choose would lock the school out of
+   * its own register.
+   */
   async createUser(input: CreateUserInput): Promise<User> {
-    // The first account is an administrator whatever it asks for. Somebody has to be
-    // able to create the others, and letting the first sign-up choose would lock the
-    // school out of its own register.
-    const created = await this.rpc<{ ok: boolean; id?: string; code?: string; message?: string }>(
-      'create_first_user',
-      { p_email: input.email, p_name: input.name, p_password: input.password },
+    const auth = await this.cfg.auth.signUp(input.email, input.password)
+
+    if (auth.error) throw new SupabaseRefusal('sign_up_refused', auth.error)
+    if (!auth.id) {
+      throw new SupabaseRefusal(
+        'no_account',
+        'That address could not be registered. Try a different one.',
+      )
+    }
+
+    const created = await this.rpc<{ ok: boolean; id?: string; code?: string; message?: string; role?: string }>(
+      'set_up_library',
+      { p_user_id: auth.id, p_email: input.email, p_name: input.name },
     )
     if (!created.ok) {
       throw new SupabaseRefusal(created.code ?? 'refused', created.message ?? 'That did not work.')
     }
-    return { ...input, id: created.id!, role: 'admin', status: 'active', lastLoginAt: null, createdAt: new Date().toISOString() }
+
+    if (!auth.session) {
+      /*
+       * A credential exists but no session: the project asks for the address to be
+       * confirmed before it is usable.
+       *
+       * Said plainly rather than as a failure, because nothing is broken — the account is
+       * made and will work as soon as the link in the email is followed. Told "sign-in
+       * failed" they would retype the same details and get the same message.
+       *
+       * In practice the school will turn email confirmation off in the Supabase project
+       * settings, since a librarian needs to be able to get in on the morning they are
+       * asked to.
+       */
+      throw new SupabaseRefusal(
+        'confirm_email',
+        'Account created. Open the link in the email we sent, then sign in.',
+      )
+    }
+
+    return {
+      id: auth.id,
+      email: input.email,
+      name: input.name,
+      role: 'admin',
+      status: 'active',
+      lastLoginAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
+    }
   }
 
-  async signIn(_email: string, _password: string): Promise<User> {
-    throw new SupabaseRefusal(
-      'sign_in_not_wired',
-      'Signing in goes through Supabase Auth, which the app has not wired up yet.',
-    )
+  /**
+   * Signing in.
+   *
+   * The credential goes to Supabase Auth and never reaches this schema. What comes back
+   * is a session, and the profile is read from `users` by that session's uuid.
+   */
+  async signIn(email: string, password: string): Promise<User> {
+    const result = await this.cfg.auth.signIn(email, password)
+    if (result.error) {
+      // One sentence for both wrong-password and unknown-address. Which of the two it was
+      // is a detail an attacker can use, and a librarian who cannot remember which
+      // address they used learns nothing either way.
+      throw new SupabaseRefusal('bad_credentials', 'That email and password do not match.')
+    }
+
+    const user = await this.currentUser()
+    if (!user) {
+      throw new SupabaseRefusal(
+        'no_profile',
+        'You have signed in but you have not been given a role yet. Ask the head librarian.',
+      )
+    }
+    return { ...user, lastLoginAt: new Date().toISOString() }
   }
 
   async signOut(): Promise<void> {
-    // Supabase Auth clears its own session; there is nothing to do on this side.
+    await this.cfg.auth.signOut()
   }
 
   async listUsers(): Promise<User[]> {
     return this.list<User>('users', { order: 'created_at' })
+  }
+
+  /**
+   * Appointing somebody else.
+   *
+   * `signUp` replaces the browser's session with the new account's. Left alone, an
+   * administrator creating a librarian would be signed out as themselves by the act of
+   * appointing them, and would have to type their password again — having just typed
+   * somebody else's.
+   *
+   * So the administrator's own tokens are captured before the sign-up and put back
+   * after. This is a workaround for a frontend-only build and it is worth being explicit
+   * about what it is: with a server, the service_role key would create the Auth account
+   * and the browser's session would never be touched. Without one, this is the honest
+   * equivalent.
+   *
+   * The profile is created by `create_user_account`, which refuses without `users.write`
+   * — so the permission is the database's decision, not the interface's.
+   */
+  async appointUser(input: CreateUserInput, role: Role = 'assistant'): Promise<User> {
+    const before = await this.session()
+
+    const auth = await this.cfg.auth.signUp(input.email, input.password)
+    if (auth.error) throw new SupabaseRefusal('sign_up_refused', auth.error)
+    if (!auth.id) throw new SupabaseRefusal('no_account', 'That address could not be registered.')
+
+    // Put the administrator back before anything else, so a failure in the next step
+    // leaves them signed in rather than signed out and confused.
+    if (before) await this.cfg.auth.restore(before.accessToken, before.refreshToken)
+
+    const made = await this.rpc<{ ok: boolean; id?: string; code?: string; message?: string; role?: string }>(
+      'create_user_account',
+      { p_user_id: auth.id, p_email: input.email, p_name: input.name, p_role: role },
+    )
+    if (!made.ok) throw new SupabaseRefusal(made.code ?? 'refused', made.message ?? 'That did not work.')
+
+    return {
+      id: auth.id,
+      email: input.email,
+      name: input.name,
+      role,
+      status: 'active',
+      lastLoginAt: null,
+      createdAt: new Date().toISOString(),
+    }
+  }
+
+  /** The caller's own session, or null. Used only to survive `signUp` replacing it. */
+  private async session(): Promise<{ accessToken: string; refreshToken: string } | null> {
+    const access = await this.cfg.accessToken()
+    if (!access) return null
+    // The refresh token is not readable from the access token and is not something to
+    // pass around; it is read here and immediately handed back to Auth, never stored.
+    const anyS = this.cfg.auth as SupabaseAuth & {
+      tokens?: () => Promise<{ access_token: string; refresh_token: string } | null>
+    }
+    const pair = await anyS.tokens?.()
+    if (!pair) return null
+    return { accessToken: pair.access_token, refreshToken: pair.refresh_token }
   }
 
   /**

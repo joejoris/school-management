@@ -33,7 +33,7 @@
  */
 import type { LibraryApi } from '@library/contracts'
 import { MockApi } from './mock'
-import { SupabaseApi } from './supabase-api'
+import { SupabaseApi, type SupabaseAuth } from './supabase-api'
 
 export type Mode = 'mock' | 'supabase'
 
@@ -74,12 +74,90 @@ let resolved: LibraryApi | null = null
 if (mode === 'supabase') {
   const { createClient } = await import('@supabase/supabase-js')
   const client = createClient(supabaseUrl!, supabaseAnonKey!, {
-    auth: { persistSession: true, autoRefreshToken: true },
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      // The app has its own sign-in and sign-up screens and its own words for what
+      // went wrong. Supabase's built-in screens and its generic messages would replace
+      // both with something a librarian cannot act on.
+      //
+      // It also matters here: the redirect URL would have to be configured in the
+      // Supabase project for the built-in flow to work at all, and this way there is
+      // nothing to configure and nothing to get wrong.
+      flowType: 'implicit',
+    },
   })
+
+  /**
+   * Supabase Auth, in the four methods `SupabaseAuth` asks for.
+   *
+   * The errors are rewritten here rather than passed through. Supabase says
+   * "Invalid login credentials", which is accurate and tells a librarian nothing about
+   * which of the two things they got wrong — and in a school, guessing which is the
+   * difference between trying the other password and asking for help.
+   */
+  const auth: SupabaseAuth & {
+    tokens: () => Promise<{ access_token: string; refresh_token: string } | null>
+  } = {
+    async signUp(email, password) {
+      const { data, error } = await client.auth.signUp({ email, password })
+      if (error) {
+        // "User already registered" is the one case worth naming, because the action is
+        // different: they need to sign in, not try again.
+        if (/already registered|already exists/i.test(error.message)) {
+          return { id: null, session: false, error: 'There is already an account with that address. Sign in instead.' }
+        }
+        return { id: null, session: false, error: 'That address could not be registered.' }
+      }
+      return { id: data.user?.id ?? null, session: Boolean(data.session), error: null }
+    },
+
+    async signIn(email, password) {
+      const { data, error } = await client.auth.signInWithPassword({ email, password })
+      if (error) {
+        // One sentence for both a wrong password and an unknown address. Saying which
+        // one it was is a detail worth having for an attacker and worthless to the
+        // person standing at the desk.
+        return { id: null, error: 'That email and password do not match.' }
+      }
+      return { id: data.user?.id ?? null, error: null }
+    },
+
+    async signOut() {
+      // Clears the local session even if the network call fails, which is what somebody
+      // signing out at the desk means. A failure here must not leave them apparently
+      // still signed in on a shared machine.
+      await client.auth.signOut().catch(() => undefined)
+    },
+
+    async userId() {
+      const { data } = await client.auth.getSession()
+      return data.session?.user?.id ?? null
+    },
+
+    async restore(accessToken, refreshToken) {
+      const { error } = await client.auth.setSession({ access_token: accessToken, refresh_token: refreshToken })
+      if (error) {
+        // The administrator's session expired while they were typing somebody else's
+        // details in. Telling them so is better than letting every subsequent request
+        // fail with a permission error they cannot interpret.
+        throw new Error('Your session expired. Sign in again.')
+      }
+    },
+
+    async tokens() {
+      const { data } = await client.auth.getSession()
+      const s = data.session
+      if (!s) return null
+      return { access_token: s.access_token, refresh_token: s.refresh_token }
+    },
+  }
+
   resolved = new SupabaseApi({
     url: supabaseUrl!,
     anonKey: supabaseAnonKey!,
     accessToken: async () => (await client.auth.getSession()).data.session?.access_token ?? null,
+    auth,
   })
 } else {
   resolved = mock

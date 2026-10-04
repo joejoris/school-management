@@ -16,7 +16,8 @@
     "prove": "node tools/prove-guards.mjs && node tools/prove-secret-scanner.mjs",
     "check:sql": "node tools/check-sql.mjs",
     "check:secrets": "node tools/check-secrets.mjs",
-    "check:plpgsql": "node tools/check-plpgsql.mjs"
+    "check:plpgsql": "node tools/check-plpgsql.mjs",
+    "verify:live": "node --experimental-strip-types tools/verify-live.mjs"
   },
   "engines": {
     "node": ">=22.18"
