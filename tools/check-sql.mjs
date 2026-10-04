@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs'
  * otherwise. See the list at the bottom.
  */
 
-const files = ['0001_library_schema.sql', '0002_circulation.sql', '0003_rls_and_seed.sql', '0004_staff.sql']
+const files = ['0001_library_schema.sql', '0002_circulation.sql', '0003_rls_and_seed.sql', '0004_staff.sql', '0005_close_functions_to_public.sql']
 const root = 'supabase/migrations/'
 
 /**
@@ -90,8 +90,15 @@ if (/revoke insert, update, delete on loans\s+from authenticated/i.test(sql)) {
 
 // ── 3. anon holds nothing but one function ────────────────────────────
 console.log('\n  the anon role')
-if (/revoke all on all tables\s+in schema public\s+from anon/i.test(sql)) pass('all table privileges revoked from anon')
-else if (/revoke all on all tables\s+from anon/i.test(sql)) {
+if (/revoke all on all tables\s+in schema public\s+from anon/i.test(sql)) {
+  // Tables are different from routines here, and the distinction matters.
+  //
+  // CREATE TABLE grants nothing to PUBLIC, so a table privilege held by anon is held by
+  // anon directly and revoking from anon really does remove it. This is verified against
+  // the running project: members, loans, fines, fine_txns, users and audit all return
+  // 401 signed out.
+  pass('all table privileges revoked from anon')
+} else if (/revoke all on all tables\s+from anon/i.test(sql)) {
   // The MySQL spelling. Postgres rejects it, and the SQL Editor said so:
   //   ERROR: 42601: syntax error at or near "from"
   fail("`REVOKE ALL ON ALL TABLES FROM anon` is MySQL's spelling — Postgres needs IN SCHEMA public")
@@ -99,11 +106,15 @@ else if (/revoke all on all tables\s+from anon/i.test(sql)) {
   fail('anon is not revoked from all tables')
 }
 if (/revoke all on all routines\s+in schema public\s+from anon/i.test(sql)) {
-  pass('all routine privileges revoked from anon')
+  // True, and almost useless on its own -- routines are different. CREATE FUNCTION grants
+  // EXECUTE to PUBLIC, so revoking from anon removes nothing and the function stays
+  // reachable by the public key. The check for the revoke that does work is further
+  // down, under "functions closed to PUBLIC", and it is the one to believe.
+  console.log('     · routines revoked from anon — which on its own protects nothing; PUBLIC is checked below')
 } else if (/revoke all on all functions\s+from anon/i.test(sql)) {
   fail('`REVOKE ALL ON ALL FUNCTIONS FROM anon` is MySQL\'s spelling — Postgres needs IN SCHEMA public, and ROUTINES is the modern word')
 } else {
-  fail('anon is not revoked from all routines — every function would be callable by the public key')
+  fail('anon is not revoked from all routines')
 }
 
 /*
@@ -372,6 +383,51 @@ if (untyped === 0) {
 for (const m of sql.matchAll(/foreach\s+\w+\s+in\s+array\s+(array\s*\[[\s\S]{0,400}?\])\s*(loop|::)/gi)) {
   if (!/::/.test(m[1] + m[0])) {
     fail('a FOREACH ... IN ARRAY over an untyped array literal — FOREACH goes through array_lower/array_upper, which are polymorphic')
+  }
+}
+
+/*
+ * A revoke aimed at the wrong role.
+ *
+ * `CREATE FUNCTION` grants EXECUTE to PUBLIC, and every role is a member of PUBLIC. So
+ *
+ *   REVOKE ALL ON FUNCTION f(...) FROM anon;
+ *
+ * removes the grant to `anon` directly while the privilege keeps arriving through
+ * PUBLIC. It reports success, protects nothing, and the function stays callable by the
+ * public anon key.
+ *
+ * This was in 0003 and 0004 and was verified as working by looking at the *body* of the
+ * response: `200 {"ok":false,"code":"forbidden"}` was read as "refusing correctly" when
+ * the truth was "reachable, and only the check inside stopping it". The difference only
+ * shows in the status code.
+ *
+ * So the rule is: to stop the public key reaching a function, revoke from PUBLIC. A
+ * revoke from anon is only ever a second, redundant removal on top of one from PUBLIC.
+ */
+console.log('\n  functions closed to PUBLIC')
+
+const fnRevokesPublic = [...sql.matchAll(/revoke[^;]*on all functions[^;]*from\s+public/gi)]
+const fnRevokesAnon = [...sql.matchAll(/revoke[^;]*on (all )?function[^;]*from\s+anon/gi)]
+
+if (fnRevokesPublic.length) {
+  pass(`${fnRevokesPublic.length} blanket revoke(s) from PUBLIC -- functions are unreachable by the anon key`)
+} else if (fnRevokesAnon.length) {
+  fail(
+    `${fnRevokesAnon.length} revoke(s) from anon but none from PUBLIC. ` +
+      'CREATE FUNCTION grants EXECUTE to PUBLIC and every role is a member of PUBLIC, so ' +
+      'revoking from anon removes nothing: the function stays reachable by the public key.',
+  )
+} else {
+  fail('no revoke from PUBLIC on functions — every function in the schema is reachable by the anon key, protected only by its own in-function check')
+}
+
+// The specific trap, in the specific form it was written: naming one function and
+// revoking it from anon rather than from PUBLIC.
+const singleFunctionAnonOnly = [...sql.matchAll(/revoke all on function ([\w]+)\([^)]*\)\s+from anon/gi)]
+if (singleFunctionAnonOnly.length && !fnRevokesPublic.length) {
+  for (const m of singleFunctionAnonOnly) {
+    fail(`revoke all on function ${m[1]}(...) from anon protects nothing — it must be 'from public'`)
   }
 }
 
