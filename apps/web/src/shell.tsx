@@ -245,12 +245,20 @@ export function Shell() {
           // bottom toolbar when it collapses. Without it the last row of a long
           // register sits under both.
           'pb-[max(1.5rem,env(safe-area-inset-bottom))] sm:pb-6 lg:pb-10',
-          // Exactly the rail's collapsed width, on every screen.
+          // Exactly the rail's collapsed width, at EVERY screen size.
           //
-          // Not its open width: the rail is `fixed`, so when it opens it overlays
+          // This was `lg:pl-[4rem]`, which reserved the space only at 1024px and up,
+          // while the rail itself is `fixed` at every breakpoint. The consequence was
+          // that on every phone and every tablet in portrait — the two sizes this app is
+          // mostly used at — a 64px strip down the left sat permanently on top of the
+          // content, covering the start of every field, every heading and every button.
+          // The layout still looked deliberate, which is what made it worth checking
+          // rather than noticing.
+          //
+          // Not the rail's open width, either: it is `fixed`, so when it opens it covers
           // this column rather than pushing it. Reserving 240px for a panel that is
           // covering the content would leave a dead strip down the side.
-          'lg:pl-[4rem]',
+          'pl-[4rem]',
         )}
       >
         <Outlet />

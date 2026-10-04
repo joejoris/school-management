@@ -163,7 +163,19 @@ export function ImportStudents() {
             {committed ? 'Imported' : 'This is what would happen'}
           </h2>
 
-          <dl className="mt-3 grid grid-cols-3 gap-3 text-sm">
+          /*
+   * Three columns at every width, with `min-w-0` on each.
+   *
+   * The `min-w-0` is the load-bearing part. A grid item defaults to
+   * `min-width: auto`, which means it refuses to shrink below its content: one
+   * five-digit row count widens its column, the grid becomes wider than the screen, and
+   * the whole page scrolls sideways with no visible way back. Setting it to zero lets
+   * the column take the share it is given.
+   *
+   * Three across rather than stacked, because these are figures rather than prose and a
+   * librarian comparing "would add" against "rejected" reads them side by side.
+   */
+  <dl className="mt-3 grid grid-cols-3 gap-3 text-sm">
             <Stat label="Rows read" value={job.rowsRead} />
             <Stat label="Would add" value={job.rowsAccepted} tone={job.rowsAccepted > 0 ? 'good' : undefined} />
             <Stat label="Rejected" value={job.rowsRejected} tone={job.rowsRejected > 0 ? 'bad' : undefined} />
@@ -203,7 +215,7 @@ function Stat({
   tone?: 'good' | 'bad'
 }) {
   return (
-    <div>
+    <div className="min-w-0">
       <dt className="text-xs text-muted-foreground">{label}</dt>
       <dd
         className={cn(

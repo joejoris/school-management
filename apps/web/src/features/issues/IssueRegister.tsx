@@ -175,7 +175,7 @@ export function IssueRegister() {
       ) : (
         <>
           {/* Phone and tablet. One stacked card per loan. */}
-          <ul className="grid gap-3 md:hidden">
+          <ul className="grid gap-3 lg:hidden">
             {rows.map((r) => (
               <li key={r.loanId}>
                 <Card className="p-4">
@@ -227,7 +227,7 @@ export function IssueRegister() {
           </ul>
 
           {/* Wide screens. The paper register's columns. */}
-          <Card className="hidden overflow-x-auto md:block">
+          <Card className="hidden overflow-x-auto lg:block">
             <table className="w-full text-sm">
               <caption className="sr-only">
                 Loans matching the current search and filter, {rows.length} shown
