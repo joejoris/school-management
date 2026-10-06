@@ -727,9 +727,19 @@ export class MockApi implements LibraryApi {
     const q = query.q?.toLowerCase().trim()
     let rows = this.db.members
     if (q) {
-      rows = rows.filter((m) =>
-        [m.memberCode, m.firstName, m.lastName].some((v) => v.toLowerCase().includes(q)),
-      )
+      // Token-based match, so "Kept Student" finds a student whose name is stored as
+      // first "Kept", last "Student". Matching each typed token against each stored
+      // field on its own finds a partial name but never a full one: "Kept Student"
+      // contains a space, which neither "Kept" nor "Student" does, so every full-name
+      // search was coming back No one found -- exactly what the person at the desk was
+      // seeing.
+      const tokens = q.split(/\s+/).filter(Boolean)
+      rows = rows.filter((m) => {
+        const haystacks = [m.memberCode, m.firstName, m.lastName, `${m.firstName} ${m.lastName}`].map((v) =>
+          v.toLowerCase(),
+        )
+        return tokens.every((t) => haystacks.some((h) => h.includes(t)))
+      })
     }
     if (query.type) rows = rows.filter((m) => m.type === query.type)
     if (query.status) rows = rows.filter((m) => m.status === query.status)

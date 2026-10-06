@@ -327,6 +327,27 @@ export class SupabaseApi implements LibraryApi {
     }
   }
 
+  /**
+   * What a free-text search asks the database.
+   *
+   * Each typed token must appear in at least one of the columns, and all tokens must
+   * pass. Matching "Kept Student" against first_name and last_name on their own finds
+   * nothing: the stored values are "Kept" and "Student", and a substring of "kept
+   * student" appears in neither. Tokens fix that — "Kept" matches first_name, "Student"
+   * matches last_name. This is the phrase the real database was refusing to answer.
+   */
+  private textFilter(q: string | undefined, columns: string[]): string | undefined {
+    const tokens = (q ?? '')
+      .trim()
+      .split(/\s+/)
+      .map((t) => t.replace(/[*(),]/g, ''))
+      .filter(Boolean)
+    if (tokens.length === 0) return undefined
+    return `(${tokens
+      .map((t) => `or=(${columns.map((c) => `${c}.ilike.*${t}*`).join(',')})`)
+      .join(',')})`
+  }
+
   private list<T>(table: string, params: Record<string, unknown> = {}): Promise<T[]> {
     return this.rest<T[]>(table, { query: { select: '*', ...params } })
   }
@@ -786,9 +807,11 @@ export class SupabaseApi implements LibraryApi {
   }
 
   async searchMembers(query: MemberQuery): Promise<Page<MemberSummary>> {
+    const qFilter = this.textFilter(query.q, ['member_code', 'first_name', 'last_name'])
     return this.page<MemberSummary>('members', query, {
       status: query.status ? `eq.${query.status}` : undefined,
       type: query.type ? `eq.${query.type}` : undefined,
+      ...(qFilter ? { and: qFilter } : {}),
     })
   }
 
@@ -839,7 +862,8 @@ export class SupabaseApi implements LibraryApi {
   }
 
   async searchTitles(query: TitleQuery): Promise<Page<TitleSummary>> {
-    return this.page<TitleSummary>('titles', query)
+    const qFilter = this.textFilter(query.q, ['title', 'author'])
+    return this.page<TitleSummary>('titles', query, { ...(qFilter ? { and: qFilter } : {}) })
   }
 
   async getTitle(id: string): Promise<TitleDetail> {
