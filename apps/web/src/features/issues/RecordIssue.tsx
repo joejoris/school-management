@@ -25,6 +25,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api'
+import { GRADE_SUGGESTIONS } from '@library/contracts'
 import { startOfLocalDay, todayLocal } from '../../lib/dates'
 import { Button, Card, CardContent, Field, Input, cn } from '../../components/ui'
 import { BookPlus, TriangleAlert } from '../../components/icons'
@@ -36,7 +37,6 @@ interface Draft {
   form: string
   stream: string
   grade: string
-  className: string
   title: string
   barcode: string
   dateTaken: string
@@ -51,7 +51,6 @@ const emptyDraft = (): Draft => ({
   form: '',
   stream: '',
   grade: '',
-  className: '',
   title: '',
   barcode: '',
   dateTaken: today(),
@@ -119,7 +118,6 @@ export function RecordIssue() {
         form: draft.form || undefined,
         stream: draft.stream || undefined,
         grade: draft.grade || undefined,
-        className: draft.className || undefined,
       })
       if (!result.ok) throw new Error(result.message)
       return result
@@ -280,12 +278,20 @@ export function RecordIssue() {
                         autoComplete="off"
                       />
                     </Field>
-                    <Field label="Class" htmlFor="className" hint="Optional.">
+                    <Field label="Grade" htmlFor="grade" hint="Optional.">
                       <Input
-                        id="className"
-                        value={draft.className}
-                        onChange={(e) => set('className', e.target.value)}
+                        id="grade"
+                        value={draft.grade}
+                        onChange={(e) => set('grade', e.target.value)}
+                        list="grade-suggestions"
+                        placeholder="10"
+                        inputMode="numeric"
                       />
+                      <datalist id="grade-suggestions">
+                        {GRADE_SUGGESTIONS.map((v) => (
+                          <option key={v} value={v} />
+                        ))}
+                      </datalist>
                     </Field>
                   </div>
                 </div>

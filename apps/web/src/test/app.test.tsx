@@ -221,6 +221,7 @@ describe('the entry form, filled in', () => {
 
     // Form and grade draw from what the school has actually recorded.
     expect(document.querySelector('datalist#form-suggestions')).not.toBeNull()
+    expect(document.querySelector('datalist#grade-suggestions')).not.toBeNull()
     expect(document.querySelector('datalist#stream-suggestions')).toBeNull()
   })
 
@@ -488,7 +489,7 @@ describe('enrolment: form, grade and stream', () => {
     expect(await screen.findByLabelText(/student's name/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/^form$/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/^stream$/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/^class$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^grade$/i)).toBeInTheDocument()
   })
 
   test('form suggests, and stream does not', async () => {
