@@ -22,7 +22,7 @@
  * loan say it was returned without a return date, or void without a reason,
  * which is the exact thing the domain refuses everywhere else.
  */
-import { useQuery } from '@tanstack/react-query'
+import { useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { type LoanRow } from '@library/contracts'
 import { api } from '../../api'
@@ -183,8 +183,11 @@ export function IssueRegister() {
                         ) : null}
                       </dl>
 
+                      <div className="mt-3 border-t border-border pt-3">
+                        <ReturnedTick loan={r} />
+                      </div>
                       {r.status === 'active' ? (
-                        <div className="mt-3 border-t border-border pt-3">
+                        <div className="mt-3">
                           <LoanActions loanId={r.loanId} />
                         </div>
                       ) : null}
@@ -225,7 +228,12 @@ export function IssueRegister() {
                           {r.returnedAt ? date(r.returnedAt) : <Status r={r} />}
                         </td>
                         <td className="px-3 py-2">
-                          {r.status === 'active' ? <LoanActions loanId={r.loanId} /> : null}
+                          <ReturnedTick loan={r} />
+                          {r.status === 'active' ? (
+                            <div className="mt-1">
+                              <LoanActions loanId={r.loanId} />
+                            </div>
+                          ) : null}
                         </td>
                       </tr>
                     ))}
@@ -274,4 +282,53 @@ function Status({ r }: { r: LoanRow }) {
     )
   }
   return <span className="shrink-0 text-xs text-muted-foreground whitespace-nowrap">On loan</span>
+}
+
+/**
+ * A simple returned/not-returned box per loan.
+ *
+ * Ticking it marks the book returned (in good condition). You cannot untick a book
+ * that has already come back — a returned loan is an event, not a flag, and there is
+ * no honest "not returned" once it is physically back. Void and renew still live in
+ * the row's actions for the mistakes that need them.
+ */
+function ReturnedTick({ loan }: { loan: LoanRow }) {
+  const queryClient = useQueryClient()
+  const [busy, setBusy] = useState(false)
+
+  if (loan.status === 'returned') {
+    return (
+      <label className="flex items-center gap-2 text-sm">
+        <input type="checkbox" checked readOnly disabled aria-label="Returned" />
+        Returned
+      </label>
+    )
+  }
+  if (loan.status === 'void') {
+    return (
+      <label className="flex items-center gap-2 text-sm text-muted-foreground">
+        <input type="checkbox" disabled aria-label="Returned" />
+        Not returned
+      </label>
+    )
+  }
+  return (
+    <label className="flex items-center gap-2 text-sm">
+      <input
+        type="checkbox"
+        aria-label="Returned"
+        disabled={busy}
+        onChange={async () => {
+          setBusy(true)
+          try {
+            await api.returnLoan({ loanId: loan.loanId, conditionIn: 'good' })
+          } finally {
+            setBusy(false)
+          }
+          await queryClient.invalidateQueries({ queryKey: ['loans'] })
+        }}
+      />
+      Not returned
+    </label>
+  )
 }
