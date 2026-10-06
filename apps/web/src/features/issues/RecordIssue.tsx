@@ -12,50 +12,20 @@
  * administrator wants and a librarian does not, and it pushes the one field they
  * need off the screen on a phone.
  *
- * ── The rule about invented data ─────────────────────────────────────
+ * ── Finding the student ──────────────────────────────────────────
  *
- * A member number that is not on file does not create a student. It says so, and
- * offers to create one deliberately — because silently inventing a student means
- * the register contains a person who does not exist, and a school cannot audit
- * its way out of that.
+ * The desk starts from a face, not a code, so the student's name is the primary box
+ * and the admission number is the secondary one. Both feed the same record: pick a
+ * name from the suggestions, or type the number on the card. Either way the loan is
+ * made against that student's memberCode, so a name and a number can never disagree.
  *
- * ── Form, Grade and Stream ──────────────────────────────────────
+ * The bus number is the other half of the record. Stream, Form and Grade come from
+ * the student's record and are read-only here — issuing a book must never rewrite an
+ * enrolment. Form and Grade suggest from the school's own lists; Stream is free text.
  *
- * All three are always visible. They used to appear only when the admission number
- * was not on file, which meant a librarian correcting a student's stream after a
- * transfer had nowhere to put it — and the alternative, quietly editing somebody's
- * record as a side effect of issuing a book, is worse: a wrong keystroke would
- * rewrite a child's enrolment with no confirmation and no undo.
- *
- * So the fields are always there, and when the student is already on file they are
- * filled from their record and left read-only. Read-only rather than editable
- * because "issue a book" and "change a student's enrolment" are two different jobs,
- * and a form that does both at once does them both wrong.
- *
- * Form and Grade suggest from the school's own lists — Form 3 and Form 4, Grades
- * 10 to 12. Stream is free text with no suggestions at all, because a school names
- * its own streams and there is no list that is right for all of them.
- *
- * ── An unrecognised admission number ──────────────────────────────
- *
- * It asks for a name, in a field labelled "New student's name", and says nothing else.
- *
- * There was a banner here once: "No student with that number is on file. Fill in their
- * name and they will be added when you record the issue." Two things were wrong with it,
- * and only the first one was visible.
- *
- * The visible one: it read as a telling-off for something librarians do correctly and
- * constantly — entering the admission number of a student not yet in the register is how
- * that student's first book gets recorded.
- *
- * The hidden one: it promised something that never happened. Filling in the name did
- * nothing, because `studentName` went into `checkout`, which ignored it, and `issue_book`
- * has no enrolment path at all. Both refused with "No student on file with that number."
- * So a librarian who followed the instruction exactly was refused for following it.
- *
- * So the banner is gone and the enrolment is real. An unknown number with a name typed
- * beside it now creates the student and then issues the book — the field is the only
- * thing they are asked for, and nothing tells them they have done something wrong.
+ * A name that matches nobody shows nothing and the button stays shut, and a mistyped
+ * number is simply no answer. Neither says the librarian has done something wrong:
+ * getting students on file is always deliberate, and nothing here invents one.
  */
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -235,11 +205,6 @@ export function RecordIssue() {
   const canSubmit = Boolean(knownMember) && draft.barcode.trim().length > 0
   const locked = Boolean(knownMember)
 
-  /*
-   * The admission number is no longer typed on this screen. It remains the
-   * student's id throughout the system -- loans, fines, holds -- but the entry
-   * task starts from a face, not a code, and the code sits behind the name.
-   */
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 py-2">
@@ -536,6 +501,3 @@ export function RecordIssue() {
     </div>
   )
 }
-
-/** Kept beside the form rather than in a shared module: it is the form's error. */
-declare function useError(): [string | null, (e: string | null) => void]
