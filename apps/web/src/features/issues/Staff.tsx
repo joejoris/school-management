@@ -21,10 +21,11 @@
  *
  * ── Why an assistant cannot be an administrator by accident ──────────
  *
- * The role is chosen on the form, not assigned automatically. \`createUser\` forces the
+ * The role is chosen on the form, not assigned automatically. `createUser` forces the
  * very first account to be an administrator whatever it asks for — somebody has to be
- * able to create the others — but every account after that is exactly what was asked
- * for, so granting the wrong one is a deliberate act rather than a side effect.
+ * able to create the others — and `appointUser` is what this screen uses, which takes
+ * the role exactly as chosen and refuses without `users.write`. So granting the wrong
+ * one is a deliberate act rather than a side effect.
  */
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -176,8 +177,21 @@ function AddStaff() {
   const [error, setError] = useState<string | null>(null)
 
   const add = useMutation({
+    /*
+     * `appointUser`, not `createUser`.
+     *
+     * `createUser` is the setup path: it makes the *first* librarian, always an
+     * administrator, and on the real backend it refuses the moment any account exists.
+     * Calling it here meant every attempt to appoint a second librarian was refused with
+     * "This library already has an account. Sign in instead." — so the staff list could
+     * hold exactly one person, forever.
+     *
+     * It went unnoticed because the in-memory domain had always allowed the second call,
+     * so the screen test passed. The fake was more forgiving than the thing it stood in
+     * for, which is the one way a suite can be green and wrong at the same time.
+     */
     mutationFn: () =>
-      api.createUser({ name: name.trim(), email: email.trim(), password, role }),
+      api.appointUser({ name: name.trim(), email: email.trim(), password, role }),
     onSuccess: async () => {
       setName('')
       setEmail('')

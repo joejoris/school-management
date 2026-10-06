@@ -49,6 +49,36 @@
   --color-card: oklch(1 0 0);
 
   --radius: 0.625rem;
+
+  /*
+   * The rail's collapsed width, in one place.
+   *
+   * It has to be in one place because two elements depend on it and they were two
+   * separate literals: the rail itself (`w-[4rem]`) and the content column's left padding
+   * (`pl-[4rem]`). Nothing tied them together, so changing one and not the other is a
+   * silent fault — and the fault is that the rail covers the content.
+   *
+   * It was exactly that bug, twice. First the padding was written `lg:pl-[4rem]`, so on
+   * every phone and every tablet in portrait a 64px strip sat over the content. Then,
+   * after that was fixed, the rail's own header row turned out to be 68px wide — 12px of
+   * padding each side plus a 44px touch target in a 64px rail, with `shrink-0` so it
+   * could not give way — and stuck 4px out over whatever it was meant to be beside.
+   *
+   * So: one variable, read by both. The padding cannot now disagree with the rail
+   * because it is the same number.
+   *
+   * NOT declared in this `@theme` block on purpose.
+   *
+   * Tailwind v4 tree-shakes theme variables: by default only the ones a generated
+   * utility refers to are emitted. `--rail-w` is referred to only inside arbitrary values
+   * -- `w-[var(--rail-w)]` -- which Tailwind does not scan for variable usage. Declared
+   * here it could be dropped from the stylesheet entirely, and then `var(--rail-w)`
+   * resolves to nothing: the rail loses its width, and the content column loses its
+   * padding. That is a worse fault than the one being fixed, introduced by the fix.
+   *
+   * `@theme static` would keep it, but a plain `:root` rule further down is ordinary CSS:
+   * always emitted, no compiler behaviour to depend on. So that is where it lives.
+   */
 }
 
 /*
@@ -60,6 +90,18 @@
  * cosmetic problem.
  */
 @layer base {
+  /*
+   * The rail's collapsed width. Plain CSS, outside `@theme`, on purpose — see the note
+   * where the other copy of this reasoning sits.
+   *
+   * The rail is `fixed`, so it overlays the content column at every screen size. This is
+   * the one number that says by how much, and both the rail's own width and the content's
+   * left padding read it.
+   */
+  :root {
+    --rail-w: 4rem;
+  }
+
   html,
   body,
   #root {

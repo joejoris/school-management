@@ -35,6 +35,27 @@
  * Form and Grade suggest from the school's own lists — Form 3 and Form 4, Grades
  * 10 to 12. Stream is free text with no suggestions at all, because a school names
  * its own streams and there is no list that is right for all of them.
+ *
+ * ── An unrecognised admission number ──────────────────────────────
+ *
+ * It asks for a name, in a field labelled "New student's name", and says nothing else.
+ *
+ * There was a banner here once: "No student with that number is on file. Fill in their
+ * name and they will be added when you record the issue." Two things were wrong with it,
+ * and only the first one was visible.
+ *
+ * The visible one: it read as a telling-off for something librarians do correctly and
+ * constantly — entering the admission number of a student not yet in the register is how
+ * that student's first book gets recorded.
+ *
+ * The hidden one: it promised something that never happened. Filling in the name did
+ * nothing, because `studentName` went into `checkout`, which ignored it, and `issue_book`
+ * has no enrolment path at all. Both refused with "No student on file with that number."
+ * So a librarian who followed the instruction exactly was refused for following it.
+ *
+ * So the banner is gone and the enrolment is real. An unknown number with a name typed
+ * beside it now creates the student and then issues the book — the field is the only
+ * thing they are asked for, and nothing tells them they have done something wrong.
  */
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
@@ -123,6 +144,23 @@ export function RecordIssue() {
     retry: false,
   })
 
+  const knownMember = member.data
+
+  /*
+   * Find the student by name, as the person at the desk actually knows them.
+   *
+   * Admission numbers are for the register. The librarian reads a student's face and
+   * name, not a code off the card, so the search matches on name and the code falls
+   * out of the chosen record.
+   */
+  const search = useQuery({
+    queryKey: ['member-search', draft.studentName.trim()],
+    queryFn: () => api.searchMembers({ limit: 50, offset: 0, q: draft.studentName.trim() }),
+    enabled: draft.studentName.trim().length > 1 && !knownMember,
+    staleTime: 10_000,
+    retry: false,
+  })
+
   const save = useMutation({
     mutationFn: async () => {
       /*
@@ -137,8 +175,21 @@ export function RecordIssue() {
         throw new Error('A book cannot be taken out on a date that has not happened yet.')
       }
 
+      const code = draft.memberCode.trim()
+
+      /*
+       * Identify the student by name, not by a typed code. The chosen record's
+       * memberCode is what makes the checkout, so there is no chance of a code
+       * disagreeing with the name on it.
+       */
+      if (!knownMember) {
+        throw new Error(
+          'No student matched that name. Pick the student from the list above, or add them from the Students screen first.',
+        )
+      }
+
       const result = await api.checkout({
-        memberCode: draft.memberCode.trim(),
+        memberCode: code,
         barcode: draft.barcode.trim(),
         dueAt: draft.dueDate || undefined,
         /*
@@ -152,10 +203,6 @@ export function RecordIssue() {
          * it went out — unreachable rather than merely unlikely.
          */
         checkedOutAt: draft.dateTaken ? startOfLocalDay(draft.dateTaken) : undefined,
-        studentName: draft.studentName.trim() || undefined,
-        form: draft.form || undefined,
-        stream: draft.stream || undefined,
-        grade: draft.grade || undefined,
       })
       if (!result.ok) throw new Error(result.message)
       return result
@@ -183,25 +230,23 @@ export function RecordIssue() {
     },
   })
 
-  const canSubmit = draft.memberCode.trim().length > 0 && draft.barcode.trim().length > 0
-  const knownMember = member.data
+  const canSubmit = Boolean(knownMember) && draft.barcode.trim().length > 0
 
   /*
-   * Whether the enrolment boxes are showing a record rather than accepting input.
-   *
-   * A known student makes them read-only. Editing them here would mean issuing a
-   * book quietly rewrote a child's enrolment — no confirmation, no audit entry, and
-   * a mistyped number could put four years of borrowing against the wrong child.
+   * The admission number is no longer typed on this screen. It remains the
+   * student's id throughout the system -- loans, fines, holds -- but the entry
+   * task starts from a face, not a code, and the code sits behind the name.
    */
   const locked = Boolean(knownMember)
-  const unknownMember = draft.memberCode.trim().length > 2 && !member.isPending && !knownMember
+  const nameTypedLongEnough = draft.studentName.trim().length > 1
+  const unknownMember = nameTypedLongEnough && !knownMember && search.isFetched
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 py-2">
       <header>
         <h1 className="text-xl font-semibold tracking-tight">Record a book issue</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          The admission number and the book number are all that is required.
+          The student and the book number are all that is required. Find the student by name.
         </p>
       </header>
 
@@ -240,19 +285,50 @@ export function RecordIssue() {
                 <BookPlus className="size-4" /> Student
               </legend>
 
-              <Field label="Admission number" htmlFor="memberCode" hint="As written on their card, including any leading zero.">
+              <Field label="Student's name" htmlFor="studentName" hint="Start typing — the register searches as you go.">
                 <Input
-                  id="memberCode"
-                  value={draft.memberCode}
-                  onChange={(e) => set('memberCode', e.target.value)}
-                  placeholder="S001"
+                  id="studentName"
+                  value={draft.studentName}
+                  onChange={(e) => {
+                    set('studentName', e.target.value)
+                    set('memberCode', '') // a typed name is not yet a chosen student
+                  }}
+                  placeholder="Kept Student"
                   autoComplete="off"
-                  inputMode="text"
-                  className="numeric"
                   // The one field the form is about. Everything else can wait.
                   autoFocus
                 />
               </Field>
+
+              {/*
+                Matching students. Tap one to pick them -- the chosen record's code is
+                what makes the loan, so a name and a code can never disagree.
+              */}
+              {search.data && search.data.items.length > 0 && !knownMember ? (
+                <ul className="grid gap-1.5">
+                  {search.data.items.map((s) => (
+                    <li key={s.id}>
+                      <button
+                        type="button"
+                        className="w-full rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-accent/40"
+                        onClick={() => {
+                          set('memberCode', s.memberCode)
+                          set('studentName', `${s.firstName} ${s.lastName}`)
+                        }}
+                      >
+                        <span className="font-medium">{s.firstName} {s.lastName}</span>
+                        <span className="text-muted-foreground"> — {s.memberCode}</span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              ) : null}
+
+              {unknownMember && search.data && search.data.items.length === 0 ? (
+                <p className="rounded-lg border border-accent bg-accent/40 px-4 py-3 text-sm text-muted-foreground">
+                  Nobody with that name is on file. Add them from the Students screen first.
+                </p>
+              ) : null}
 
               {/*
                 Who this is, once the number is recognised.
@@ -281,33 +357,6 @@ export function RecordIssue() {
                 </div>
               ) : null}
 
-              {unknownMember ? (
-                /*
-                 * Offers to create rather than creating.
-                 *
-                 * Inventing a student from a typo is how a register acquires people
-                 * who do not exist. Making it a second, explicit act means the entry is
-                 * always something a person chose to do.
-                 */
-                <p className="rounded-lg border border-accent bg-accent/40 px-4 py-3 text-sm">
-                  <strong className="font-medium">No student with that number is on file.</strong>{' '}
-                  <span className="text-muted-foreground">
-                    Fill in their name and they will be added when you record the issue.
-                  </span>
-                </p>
-              ) : null}
-
-              {unknownMember ? (
-                <Field label="Student's name" htmlFor="studentName">
-                  <Input
-                    id="studentName"
-                    value={draft.studentName}
-                    onChange={(e) => set('studentName', e.target.value)}
-                    placeholder="Kept Student"
-                    autoComplete="off"
-                  />
-                </Field>
-              ) : null}
 
               {/*
                 Form and Grade suggest; Stream does not.

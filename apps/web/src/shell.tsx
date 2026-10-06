@@ -108,12 +108,31 @@ function Rail() {
           // Narrow until asked, on every screen. There is no width at which this
           // earns 240px of permanent space: the form it would be crowding is two
           // fields wide.
-          'w-[4rem]',
+          //
+          // `--rail-w`, and not a literal, because the content column reads the same
+          // variable for its padding. The two were separate numbers and drifted apart
+          // twice: once as a missing breakpoint prefix, once because this rail's own
+          // header row was 4px wider than the rail. One number cannot drift.
+          'w-[var(--rail-w)]',
           open && 'w-60',
         )}
         style={{ paddingBottom: 'env(safe-area-inset-bottom)' }}
       >
-        <div className="flex items-center gap-3 px-3 py-4">
+        {/*
+          * px-2, not px-3, and the reason is arithmetic.
+          *
+          * A 44px touch target plus 12px of padding on each side is 68px, in a rail that
+          * is 64px wide. The button carries `shrink-0`, so it could not give way — the
+          * header simply stuck 4px out to the right, over the content it was supposed to
+          * be sitting beside. On a 360px phone that 4px is on top of the field a
+          * librarian is trying to tap.
+          *
+          * px-2 puts it at 60px, which fits, and lines the toggle's icon up with the
+          * links below: the links have px-3 inside a px-2 list, so their icons sit at
+          * 20px, and a 20px icon centred in a 44px button at 8px also sits at 20px.
+          * With px-3 it was at 24px and the two did not line up.
+          */}
+        <div className="flex items-center gap-3 px-2 py-4">
           <button
             type="button"
             onClick={toggle}
@@ -258,7 +277,9 @@ export function Shell() {
           // Not the rail's open width, either: it is `fixed`, so when it opens it covers
           // this column rather than pushing it. Reserving 240px for a panel that is
           // covering the content would leave a dead strip down the side.
-          'pl-[4rem]',
+          //
+          // `--rail-w`, the same number the rail's own width comes from.
+          'pl-[var(--rail-w)]',
         )}
       >
         <Outlet />

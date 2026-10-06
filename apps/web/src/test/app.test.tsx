@@ -82,6 +82,23 @@ async function mountSignedIn(path = '/', arrange?: () => Promise<unknown>) {
    * Signing in when the account exists is the same arrangement from the screen's
    * point of view and makes the helper safe to call twice.
    */
+  /*
+   * `createUser` for the very first account, `appointUser` for anything after.
+   *
+   * The two are not interchangeable and the distinction is the point. `createUser` is the
+   * setup path -- once, on an empty database, always an administrator -- and `set_up_library`
+   * refuses the moment any account exists. `appointUser` is what an administrator uses to
+   * appoint somebody afterwards, and it refuses without `users.write`.
+   *
+   * The Staff screen was calling `createUser` for that, so on the real backend every
+   * attempt to appoint a second librarian was refused and the staff list could hold exactly
+   * one person forever. No test caught it, because the in-memory domain had always allowed
+   * the second call. A fake that is more forgiving than the thing it stands in for does not
+   * merely fail to catch bugs -- it hides them, and the suite is green because it is wrong.
+   *
+   * This helper is on an empty database before the first call and never after, so
+   * `createUser` is correct here and `appointUser` would be wrong.
+   */
   if (!(await api.hasAccounts())) {
     await api.createUser({
       email: 'head@dandorasecondary.go.ke',
@@ -97,6 +114,26 @@ async function mountSignedIn(path = '/', arrange?: () => Promise<unknown>) {
   // like it proves.
   if (arrange) await arrange()
   return mount(path)
+}
+
+/*
+ * Pick a student by typing part of their name and tapping the match.
+ *
+ * The entry screen identifies a student by name now. The admission number remains on
+ * their record and on every loan, but the person at the desk starts from a face, so the
+ * screen does.
+ */
+async function pickStudent(user: ReturnType<typeof userEvent.setup>, name: string) {
+  await user.type(screen.getByLabelText(/student's name/i), name)
+  const match = await screen.findByRole('button', { name: new RegExp(name, 'i') })
+  await user.click(match)
+}
+
+/** First book's barcode, without knowing it ahead of time. */
+async function onlyBook() {
+  const page = await api.searchTitles({ limit: 10, offset: 0 })
+  const detail = await api.getTitle(page.items[0]!.id)
+  return detail.copies[0]!.barcode
 }
 
 describe('the landing screen', () => {
@@ -148,36 +185,62 @@ describe('the landing screen', () => {
 
 describe('the entry form, filled in', () => {
   test('the submit button is unavailable until there is something to record', async () => {
-    const { user } = await mountSignedIn('/')
+    const { user } = await mountSignedIn('/', async () => {
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+    })
     await screen.findByRole('heading', { name: /record a book issue/i })
 
     const submit = screen.getByRole('button', { name: /record issue/i })
     expect(submit).toBeDisabled()
 
-    await user.type(screen.getByLabelText(/admission number/i), 'S001')
-    // One field is still not enough: a book number is the other half of the record.
+    // Picking a student is not enough: a book number is the other half of the record.
+    await pickStudent(user, 'Kept')
     expect(submit).toBeDisabled()
 
-    await user.type(screen.getByLabelText(/book number/i), 'BK-0001')
+    await user.type(screen.getByLabelText(/book number/i), await onlyBook())
     await waitFor(() => expect(submit).toBeEnabled())
   })
 
-  test('an admission number nobody has does not silently invent a student', async () => {
-    const { user } = await mountSignedIn('/')
+  test('a name is what finds the student, and choosing one issues the book', async () => {
+    const { user } = await mountSignedIn('/', async () => {
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+    })
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    await user.type(screen.getByLabelText(/admission number/i), 'S999')
+    await pickStudent(user, 'Kept')
+    await user.type(screen.getByLabelText(/book number/i), await onlyBook())
+    await user.click(screen.getByRole('button', { name: /record issue/i }))
 
-    // The register must never contain a person who does not exist, so the form
-    // says so and asks for a name rather than accepting one.
-    expect(await screen.findByText(/no student with that number is on file/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/student's name/i)).toBeInTheDocument()
+    await waitFor(async () => {
+      const loans = await api.listLoans({ limit: 25, offset: 0 })
+      expect(loans.items).toHaveLength(1)
+    })
+    const loans = await api.listLoans({ limit: 25, offset: 0 })
+    expect(loans.items[0]?.memberCode).toBe('S001')
+  })
+
+  test('a name that matches nobody says so, plainly', async () => {
+    const { user } = await mountSignedIn('/', async () => {
+      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+    })
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    await user.type(screen.getByLabelText(/student's name/i), 'Nobody Here')
+
+    await waitFor(async () => {
+      expect(
+        await screen.findByText(/nobody with that name is on file/i),
+      ).toBeInTheDocument()
+    })
+    // The button stays shut until a real student is picked -- no invention of a record.
+    expect(screen.getByRole('button', { name: /record issue/i })).toBeDisabled()
   })
 
   test('stream is free text, and the hint says so', async () => {
-    const { user } = await mountSignedIn('/')
+    await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
-    await user.type(screen.getByLabelText(/admission number/i), 'S999')
 
     const stream = await screen.findByLabelText(/^stream/i)
     expect(stream).toHaveAttribute('placeholder', 'Red Stream')
@@ -187,9 +250,8 @@ describe('the entry form, filled in', () => {
   })
 
   test('form and grade suggest, stream does not', async () => {
-    const { user } = await mountSignedIn('/')
+    await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
-    await user.type(screen.getByLabelText(/admission number/i), 'S999')
     await screen.findByLabelText(/^stream/i)
 
     // Form and grade draw from what the school has actually recorded.
@@ -198,19 +260,20 @@ describe('the entry form, filled in', () => {
   })
 
   test('a failed record keeps what was typed', async () => {
-    const { user } = await mountSignedIn('/')
+    const { user } = await mountSignedIn('/', async () => {
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+    })
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    await user.type(screen.getByLabelText(/admission number/i), 'S001')
-    await user.type(screen.getByLabelText(/book number/i), 'BK-0001')
+    await pickStudent(user, 'Kept')
+    await user.type(screen.getByLabelText(/book number/i), 'BK-no-such')
     await user.click(screen.getByRole('button', { name: /record issue/i }))
 
-    // Nothing on file, so this is refused — and the refusal must be visible
-    // rather than leaving the librarian wondering whether it saved.
-    expect(await screen.findByRole('alert')).toHaveTextContent(/no student on file/i)
+    // Nothing on file for that book number, so this is refused -- and the refusal must
+    // be visible rather than leaving the librarian wondering whether it saved.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no book on file/i)
     // A form that empties when it complains is a form people stop trusting.
-    expect(screen.getByLabelText(/admission number/i)).toHaveValue('S001')
-    expect(screen.getByLabelText(/book number/i)).toHaveValue('BK-0001')
+    expect(screen.getByLabelText(/book number/i)).toHaveValue('BK-no-such')
   })
 })
 
@@ -270,12 +333,20 @@ describe('the gate at /', () => {
     // to navigate to.
     await user.click(screen.getByRole('button', { name: /^sign in$/i }))
     expect(await screen.findByRole('heading', { name: /record a book issue/i })).toBeInTheDocument()
-    // The first account runs the library, whatever role it asked for.
+    /*
+     * The first account runs the library, whatever role it asked for.
+     *
+     * Not "whatever role it typed" -- it did not type one, there being no role field on
+     * the setup form. The point is that somebody must be able to create the others, and
+     * letting the very first sign-up choose its own role is the way a school ends up with
+     * nobody able to appoint anybody.
+     */
     expect(await api.currentUser()).toMatchObject({ role: 'admin' })
   })
 
   test('once an account exists, / offers sign-in and account creation', async () => {
     await api.createUser({ email: 'head@librarian', name: 'H', password: 'x', role: 'admin' })
+    // On an empty database, so `createUser` is the right call -- that is the setup path.
     // Deliberately not signed in: the point is what a signed-out visitor sees when
     // accounts already exist.
     mount('/')
@@ -427,6 +498,7 @@ describe('creating an account leads to sign-in', () => {
     // The domain-level half of the rule. If this regresses, the UI above would
     // still work and the separation would be gone.
     await api.createUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'admin' })
+    // First account, empty database, so `createUser` -- the setup path -- is correct here.
     expect(await api.currentUser()).toBeNull()
     await api.signIn('a@librarian', 'x')
     expect(await api.currentUser()).not.toBeNull()
@@ -466,8 +538,7 @@ describe('enrolment: form, grade and stream', () => {
     // An earlier version of this test asserted on an empty form, where the block is
     // hidden — so a Class field sitting in the source passed, because it never made
     // it onto the screen. The guard was checking an unrelated branch.
-    await user.type(screen.getByLabelText(/admission number/i), 'S999')
-    await screen.findByText(/no student with that number is on file/i)
+    await user.type(screen.getByLabelText(/student's name/i), 'Nobody Here')
 
     // The school identifies a student by admission number, form, grade and stream.
     // A class field is a fifth way to say something the others already say, and two
@@ -520,7 +591,7 @@ describe('enrolment: form, grade and stream', () => {
     )
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+    await pickStudent(user, 'Kept')
 
     const form = screen.getByLabelText(/^form$/i)
     const grade = screen.getByLabelText(/^grade$/i)
@@ -549,8 +620,7 @@ describe('enrolment: form, grade and stream', () => {
     const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    await user.type(screen.getByLabelText(/admission number/i), 'S999')
-    await screen.findByText(/no student with that number is on file/i)
+    await user.type(screen.getByLabelText(/student's name/i), 'Nobody Here')
 
     const form = screen.getByLabelText(/^form$/i)
     expect(form).not.toHaveAttribute('readonly')
@@ -599,6 +669,7 @@ describe('after creating an account', () => {
     // whose owner cannot remember it and cannot sign in — and cannot reach the
     // Backup screen either, because that is behind the sidebar.
     await api.createUser({ email: 'someone@old', name: 'Old', password: 'x', role: 'admin' })
+    // Empty database beforehand, so this is the setup path and `createUser` is right.
     mount('/')
 
     const clear = await screen.findByRole('button', { name: /clear them and start again/i })
@@ -623,10 +694,51 @@ describe('the sidebar pops up', () => {
     await mountSignedIn('/')
     const nav = await screen.findByRole('navigation', { name: /main/i })
 
-    expect(nav.className).toContain('w-[4rem]')
+    /*
+     * `var(--rail-w)`, not a literal.
+     *
+     * The width was `w-[4rem]` and the content column's padding was `pl-[4rem]`, as two
+     * separate numbers that had to agree and nothing made them. They disagreed twice: once
+     * because the padding carried an `lg:` prefix and so reserved no space at all on a
+     * phone, and once because this rail's header row needed 68px inside a 64px rail.
+     *
+     * Both now read one variable, so asserting on a literal would lock in the very thing
+     * that had to change. This asserts the width *comes from the shared variable*, which
+     * is the property that matters — that the rail and the space reserved for it cannot
+     * drift apart.
+     */
+    expect(nav.className).toContain('w-[var(--rail-w)]')
     // The rule this change removed, and the reason for it: a permanent 240px column
     // on any screen wide enough, crowding a form that is two fields wide.
     expect(nav.className).not.toContain('lg:w-60')
+  })
+
+  /*
+   * The fault that cost a phone its left-hand edge, and the one that would have come
+   * back the moment the rail's width was changed in one place only.
+   *
+   * A `fixed` rail overlays the content at every screen size, so the column beside it
+   * must be inset at every screen size too. This was `lg:pl-[4rem]`: correct on a desktop,
+   * and on a 360px phone a 64px strip lay across the start of every field.
+   */
+  test('the content column clears the rail at every screen size, not just wide ones', async () => {
+    await mountSignedIn('/')
+
+    /*
+     * Waited for, not queried.
+     *
+     * The shell decides signed-in versus signed-out by asking the api who you are, which
+     * is a promise, so the first paint after mounting has no `<main>` in it at all. This
+     * used to `document.querySelector('main')` straight away, which returned null and
+     * failed on "expected null to be truthy" -- a failure that says nothing about the
+     * layout, which is what this test exists to check.
+     */
+    const main = await screen.findByRole('main')
+
+    // No breakpoint prefix. A prefix means the space appears only where the rail is
+    // least in the way, which is the exact opposite of what is needed.
+    expect(main.className).toContain('pl-[var(--rail-w)]')
+    expect(main.className).not.toMatch(/(?:sm|md|lg|xl):pl-/)
   })
 
   /*
@@ -652,7 +764,7 @@ describe('the sidebar pops up', () => {
 
     await user.click(screen.getByRole('button', { name: /collapse the menu/i }))
     expect(isExpanded()).toBe('false')
-    expect(nav.className).toContain('w-[4rem]')
+    expect(nav.className).toContain('w-[var(--rail-w)]')
   })
 
   test('it stays open while the pointer is still over it', async () => {
@@ -898,7 +1010,7 @@ describe('circulation at the desk', () => {
   /** Issues the one book to the one student, through the entry form. */
   async function lend(user: ReturnType<typeof userEvent.setup>) {
     await screen.findByRole('heading', { name: /record a book issue/i })
-    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+    await pickStudent(user, 'Kept')
     await user.type(screen.getByLabelText(/book number/i), await firstBarcode())
     await user.click(screen.getByRole('button', { name: /record issue/i }))
     await screen.findByText(/^recorded\./i)
@@ -1235,6 +1347,20 @@ describe('fines at the desk', () => {
  *   two books per student simply could not have it.
  */
 describe('staff and rules', () => {
+  /*
+   * This test passed while the feature was broken.
+   *
+   * It arranged the second librarian with `api.createUser`, and the in-memory domain
+   * allowed that. The screen it was testing called `api.createUser` too. But on the real
+   * backend that call reaches `set_up_library`, which refuses the moment any account
+   * exists -- so in the actual application every attempt to appoint a second librarian was
+   * refused with "This library already has an account."
+   *
+   * The screen and the test agreed with each other and both were wrong, because they were
+   * talking to a fake that was more forgiving than the thing it stands in for. It is
+   * arranged through `appointUser` now, the way the screen does it, and the domain refuses
+   * a second `createUser` so the separation cannot quietly disappear again.
+   */
   test('a second librarian can be added', async () => {
     const { user } = await mountSignedIn('/staff')
     // The heading renders at once; the accounts arrive after their query. Waiting on
@@ -1271,7 +1397,13 @@ describe('staff and rules', () => {
 
   test('a second account can be switched off, and back on', async () => {
     const { user } = await mountSignedIn('/staff', async () => {
-      await api.createUser({ name: 'Jane', email: 'jane@librarian', password: 'x', role: 'assistant' })
+      // `appointUser`, not `createUser`. The screen calls this one now, and the test
+      // arranges the same way the screen does -- which is the point. While the screen was
+      // calling `createUser` for a second librarian this arrangement still succeeded,
+      // because the in-memory domain allowed it, so the test passed while the real
+      // database refused the identical call. A fake more forgiving than the thing it
+      // stands in for does not merely miss bugs; it hides them.
+      await api.appointUser({ name: 'Jane', email: 'jane@librarian', password: 'x', role: 'assistant' })
     })
     await screen.findByText('Jane')
 
@@ -1359,12 +1491,15 @@ describe('staff and rules', () => {
     await api.createUser({ name: 'Head', email: 'head@librarian', password: 'x', role: 'admin' })
     await api.signIn('head@librarian', 'x')
 
-    const assistant = await api.createUser({
+    const assistant = await api.appointUser({
       name: 'Desk',
       email: 'desk@librarian',
       password: 'x',
       role: 'assistant',
     })
+    // And *then* appoint somebody, which is the other door. Calling `createUser` here would
+    // now be refused, because the database is no longer empty -- which is the whole reason
+    // the two methods are separate rather than one with a flag.
     expect(assistant.role).toBe('assistant')
 
     await expect(__mock.asUser(assistant.id, () => api.listUsers())).rejects.toThrow(/cannot/i)
@@ -1400,6 +1535,147 @@ describe('staff and rules', () => {
  * student — and there was no way to get the register out of the screen, so the
  * version in the head teacher's report was retyped by hand and drifted.
  */
+describe('the two ways an account gets made', () => {
+  /*
+   * The separation is the fix, so it is tested as a property rather than through a
+   * screen. Two methods where there was one, and the reason they cannot be merged again is
+   * that they are different acts with different rules.
+   *
+   *   createUser   once, on an empty database, always an administrator
+   *   appointUser  afterwards, role as asked, refused without `users.write`
+   */
+  test('the very first account is an administrator, whatever role was asked for', async () => {
+    // Typed as `assistant` on purpose. Somebody must be able to create the others, and
+    // letting the first sign-up choose is how a school ends up with nobody able to appoint
+    // anybody -- which is exactly the trap the Staff screen fell into from the other side.
+    const made = await api.createUser({
+      email: 'first@librarian',
+      name: 'First',
+      password: 'x',
+      role: 'assistant',
+    })
+
+    expect(made.role).toBe('admin')
+    // And on the account itself, once signed in -- not before.
+    //
+    // This reads `currentUser()` straight after `createUser` and got null. Creating an
+    // account is not signing in: the two were deliberately separated, so there is no
+    // session at this point and asking who you are is asking about nobody. The `?` on the
+    // optional chain swallowed that, and the assertion then read "undefined is not admin"
+    // as though it were a statement about roles.
+    expect(await api.currentUser()).toBeNull()
+
+    await api.signIn('first@librarian', 'x')
+    expect((await api.currentUser())?.role).toBe('admin')
+  })
+
+  test('createUser is refused once an account exists', async () => {
+    await api.createUser({ email: 'first@librarian', name: 'First', password: 'x', role: 'admin' })
+
+    // This is the call the Staff screen used to make, and it is what made a second
+    // librarian impossible: the real database refused it, and the in-memory domain used
+    // to allow it, so the test suite passed and the feature was broken.
+    await expect(
+      api.createUser({ email: 'second@librarian', name: 'Second', password: 'x', role: 'assistant' }),
+    ).rejects.toThrow(/already has an account.*Appoint/i)
+  })
+
+  test('appointUser is how a second one is made, with the role asked for', async () => {
+    await api.createUser({ email: 'first@librarian', name: 'First', password: 'x', role: 'admin' })
+    await api.signIn('first@librarian', 'x')
+
+    const assistant = await api.appointUser({
+      email: 'desk@librarian',
+      name: 'Desk',
+      password: 'x',
+      role: 'assistant',
+    })
+
+    expect(assistant.role).toBe('assistant')
+    // And the first account is untouched, because appointing somebody is not promoting them.
+    expect((await api.currentUser())?.role).toBe('admin')
+  })
+
+  test('a duplicate address is refused, naming the action to take instead', async () => {
+    await api.createUser({ email: 'first@librarian', name: 'First', password: 'x', role: 'admin' })
+    await api.signIn('first@librarian', 'x')
+
+    // "There is already an account with that email address" and nothing else leaves the
+    // person retyping the same details and getting the same sentence. It says where to go.
+    await expect(
+      api.appointUser({ email: 'FIRST@librarian', name: 'Again', password: 'x', role: 'teacher' }),
+    ).rejects.toThrow(/already/i)
+  })
+
+  test('an appointed account has never signed in, and does not pretend otherwise', async () => {
+    await api.createUser({ email: 'first@librarian', name: 'First', password: 'x', role: 'admin' })
+    await api.signIn('first@librarian', 'x')
+
+    const teacher = await api.appointUser({
+      email: 'teacher@librarian',
+      name: 'Teacher',
+      password: 'x',
+      role: 'teacher',
+    })
+
+    // Both new accounts, not just this one. Appointing somebody is not them arriving, and a
+    // sign-in timestamp on an account nobody has used is a small lie in the column
+    // somebody reads to work out who has been on the desk.
+    expect(teacher.lastLoginAt).toBeNull()
+    const second = await api.appointUser({
+      email: 'second@librarian',
+      name: 'Second',
+      password: 'x',
+      role: 'assistant',
+    })
+    expect(second.lastLoginAt).toBeNull()
+  })
+
+  /*
+   * The permission, which is the reason there are two methods rather than one with a
+   * flag. Being able to run a register is a different power from being able to make an
+   * administrator, and the second must not come along with the first.
+   */
+  test('an assistant at the desk cannot appoint anybody', async () => {
+    await api.createUser({ email: 'head@librarian', name: 'Head', password: 'x', role: 'admin' })
+    await api.signIn('head@librarian', 'x')
+    const desk = await api.appointUser({
+      email: 'desk@librarian',
+      name: 'Desk',
+      password: 'x',
+      role: 'assistant',
+    })
+
+    // They can issue books all day. They cannot hand out roles.
+    await expect(
+      __mock.asUser(desk.id, () =>
+        api.appointUser({ email: 'sneaky@librarian', name: 'Sneaky', password: 'x', role: 'admin' }),
+      ),
+    ).rejects.toThrow(/cannot/i)
+
+    // And the refusal left nobody behind: an account that does not exist cannot have
+    // been given a role.
+    expect((await api.listUsers()).map((u) => u.email)).not.toContain('sneaky@librarian')
+  })
+
+  test('a teacher cannot appoint anybody either', async () => {
+    await api.createUser({ email: 'head@librarian', name: 'Head', password: 'x', role: 'admin' })
+    await api.signIn('head@librarian', 'x')
+    const teacher = await api.appointUser({
+      email: 'teacher@librarian',
+      name: 'Teacher',
+      password: 'x',
+      role: 'teacher',
+    })
+
+    await expect(
+      __mock.asUser(teacher.id, () =>
+        api.appointUser({ email: 'other@librarian', name: 'Other', password: 'x', role: 'assistant' }),
+      ),
+    ).rejects.toThrow(/cannot/i)
+  })
+})
+
 describe('taking a book out of circulation', () => {
   const openCatalogue = async () => {
     const { user } = await mountSignedIn('/catalogue', () =>

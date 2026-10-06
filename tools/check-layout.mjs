@@ -65,7 +65,7 @@ if (!navIsFixed && !navIsSticky) {
   // The prefix is captured as its own group. Reading it by splitting the matched class on
   // ':' was wrong -- `pl-[4rem]` contains no colon, so the "prefix" came back as the class
   // itself and every screen was reported as broken, including the one just fixed.
-  const pad = /(?:['"\s])((?:([a-z]{2}):)?pl-(?:\[[^\]]+\]|\d+))(?=['"\s])/.exec(shell)
+  const pad = /(?:['"\s])((?:([a-z]{2}):)?pl-(\[[^\]]+\]|var\(--[\w-]+\)|\d+))(?=['"\s])/.exec(shell)
   const prefix = pad?.[2]
   if (!pad) {
     fail('the content column has no left padding, so the fixed rail covers the start of everything')
@@ -76,6 +76,55 @@ if (!navIsFixed && !navIsSticky) {
     )
   } else {
     pass(`the content column clears the rail at every breakpoint (${pad[1]})`)
+  }
+
+  /*
+   * And the two must be the SAME NUMBER.
+   *
+   * This is the part that was checked and did not help: for a long time the rule only
+   * complained about a breakpoint prefix, so a rail of 4rem beside a padding of 3rem
+   * passed — which is the same covering bug, quieter. They are now both
+   * `var(--rail-w)`, so there is one number and it cannot disagree with itself.
+   *
+   * Two literals in the same file that have to agree are a coupling with nothing
+   * enforcing it. One variable is the whole fix.
+   */
+  const railWidth = /(?:['"\s])w-(\[[^\]]+\]|var\(--[\w-]+\)|\d+)(?=['"\s])/.exec(shell)?.[1]
+  const padValue = pad?.[3]
+  if (railWidth && padValue && railWidth !== padValue) {
+    fail(
+      `the rail is ${railWidth} but the content column reserves ${padValue} for it — ` +
+        'they must be one value, or the rail covers the content',
+    )
+  } else if (railWidth && padValue) {
+    pass(`the rail (${railWidth}) and the space reserved for it (${padValue}) are the same value`)
+  }
+
+  /*
+   * The rail's own contents must fit inside it.
+   *
+   * `w-[4rem]` is 64px. A 44px touch target with `px-3` — 12px either side — is 68px,
+   * and `shrink-0` means it cannot give way. So the header stuck 4px out over the content.
+   * Read off the class names, because the alternative is not seeing it at all: jsdom does
+   * no layout, so no test could have caught it either.
+   */
+  const railRem = railWidth?.match(/^(\d+(?:\.\d+)?)rem$/)?.[1]
+  if (railRem) {
+    const railPx = Number(railRem) * 16
+    const target = /size-(\d+)/.exec(shell)
+    const px3 = /gap-3 px-3/.test(shell)
+    if (target) {
+      const touch = Number(target[1]) * 4 // Tailwind's size-N is N/4 rem
+      const rowWidth = touch + (px3 ? 24 : 16)
+      if (rowWidth > railPx) {
+        fail(
+          `the rail is ${railPx}px wide but its header row needs ${rowWidth}px ` +
+            `(a ${touch}px touch target with ${px3 ? 'px-3' : 'px-2'}), so it overhangs the content`,
+        )
+      } else {
+        pass(`the rail's header row fits inside it (${rowWidth}px in ${railPx}px)`)
+      }
+    }
   }
 }
 

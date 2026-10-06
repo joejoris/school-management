@@ -199,16 +199,47 @@ export class SupabaseApi implements LibraryApi {
     })
 
     if (!res.ok) {
-      // Postgres error text is not for a librarian. Log it for whoever is debugging
-      // and show something true and short.
+      // Postgres error text is not for a librarian, so it is logged rather than shown.
       const detail = await res.text().catch(() => '')
       console.error(`[supabase] ${init.method ?? 'GET'} ${path} -> ${res.status}`, detail)
-      throw new SupabaseRefusal(
-        'request_failed',
-        res.status === 404
-          ? 'That record could not be found.'
-          : 'The library system could not be reached. Check your connection and try again.',
-      )
+
+      /*
+       * PostgREST uses 404 for three unrelated things, and this client reported all three
+       * as "That record could not be found."
+       *
+       *   PGRST205  the table is not in the schema cache -- a migration has not run
+       *   PGRST202  the function does not exist, or not with those argument names
+       *   otherwise a row that is genuinely not there
+       *
+       * The middle one is what actually happened: set_up_library had not been applied to
+       * the database, so calling it returned 404 PGRST202 and the screen said a record was
+       * missing. That points at the register rather than at the database, and it is a very
+       * expensive afternoon to lose.
+       *
+       * So the code is read back out of the body and the sentence says which of the three
+       * it is. A librarian cannot act on any of it, but whoever is holding the phone can,
+       * and "the app is looking for something that was never built" is a completely
+       * different afternoon from "that student is not on file".
+       */
+      let message = 'The library system could not be reached. Check your connection and try again.'
+      if (res.status === 404) {
+        if (/PGRST205/.test(detail)) {
+          message =
+            'The library database is not set up yet. Somebody needs to run the migrations in the Supabase SQL Editor.'
+        } else if (/PGRST202/.test(detail)) {
+          message =
+            'The library database is missing a function it needs. Somebody needs to run the migrations in the Supabase SQL Editor.'
+        } else {
+          message = 'That record could not be found.'
+        }
+      } else if (res.status === 401 || res.status === 403) {
+        // Not "could not be found". The caller is known and not allowed, which is a
+        // different fact, and one the sign-in screen has to be able to tell apart from an
+        // empty database.
+        message = 'You do not have permission to do that.'
+      }
+
+      throw new SupabaseRefusal('request_failed', message)
     }
 
     if (res.status === 204) return undefined as T
@@ -359,6 +390,11 @@ export class SupabaseApi implements LibraryApi {
    * The first account is an administrator whatever it asks for. Somebody must be able to
    * create the others, and letting the first sign-up choose would lock the school out of
    * its own register.
+   *
+   * Used ONCE, on an empty database. `set_up_library` refuses the moment any account
+   * exists, which is what stops a second caller becoming an administrator. Appointing
+   * anybody after that is `appointUser`, not this -- the Staff screen called this one by
+   * mistake and so could never appoint a second librarian at all.
    */
   async createUser(input: CreateUserInput): Promise<User> {
     const auth = await this.cfg.auth.signUp(input.email, input.password)
@@ -381,20 +417,24 @@ export class SupabaseApi implements LibraryApi {
 
     if (!auth.session) {
       /*
-       * A credential exists but no session: the project asks for the address to be
-       * confirmed before it is usable.
+       * A credential exists but no session. The project asks for the address to be
+       * confirmed before it will issue one.
        *
-       * Said plainly rather than as a failure, because nothing is broken — the account is
-       * made and will work as soon as the link in the email is followed. Told "sign-in
-       * failed" they would retype the same details and get the same message.
+       * Said plainly, because nothing is broken -- the account is made and works as soon
+       * as the link is followed. Told "sign-in failed", people retype the same details and
+       * get the same message.
        *
-       * In practice the school will turn email confirmation off in the Supabase project
-       * settings, since a librarian needs to be able to get in on the morning they are
-       * asked to.
+       * And it names the other way out, because this is a dead end for most schools. A
+       * librarian who never receives the mail, or who is on a shared machine with no mail
+       * client, is simply stuck -- and the fix is one tick in the Supabase project:
+       * Authentication -> Providers -> Email -> untick "Confirm email". That is also the
+       * right setting for this application, which is used at a counter by people who need
+       * to be in on the morning they are asked.
        */
       throw new SupabaseRefusal(
         'confirm_email',
-        'Account created. Open the link in the email we sent, then sign in.',
+        'Account created. Sign in now — if Supabase asks you to confirm the address first, ' +
+          'turn off "Confirm email" under Authentication → Providers → Email.',
       )
     }
 
@@ -404,7 +444,16 @@ export class SupabaseApi implements LibraryApi {
       name: input.name,
       role: 'admin',
       status: 'active',
-      lastLoginAt: new Date().toISOString(),
+      /*
+       * Null, not `now()`.
+       *
+       * Creating an account is not signing in. They are two different acts by two
+       * different people -- the first librarian sets the library up, and the next
+       * librarian to use it signs in with their own account -- and a sign-in timestamp on
+       * an account nobody has signed in with is a lie in the column somebody reads to
+       * work out who has been on the desk.
+       */
+      lastLoginAt: null,
       createdAt: new Date().toISOString(),
     }
   }
@@ -418,19 +467,58 @@ export class SupabaseApi implements LibraryApi {
   async signIn(email: string, password: string): Promise<User> {
     const result = await this.cfg.auth.signIn(email, password)
     if (result.error) {
-      // One sentence for both wrong-password and unknown-address. Which of the two it was
-      // is a detail an attacker can use, and a librarian who cannot remember which
-      // address they used learns nothing either way.
-      throw new SupabaseRefusal('bad_credentials', 'That email and password do not match.')
+      /*
+       * Supabase has already turned that into a sentence a person can act on.
+       *
+       * This used to overwrite it with "That email and password do not match." The seam's
+       * auth layer distinguishes a wrong password from an unconfirmed address, from a rate
+       * limit, and from the network being down -- and all of that was being flattened into
+       * one sentence about the password. Somebody whose address had not been confirmed was
+       * told to retype a password that had been correct the whole time.
+       *
+       * Kept as a `bad_credentials` code because that is what it usually is, and the code
+       * is what a caller branches on. The message is the specific one.
+       */
+      throw new SupabaseRefusal('bad_credentials', result.error)
     }
 
     const user = await this.currentUser()
     if (!user) {
+      /*
+       * Signed in, with a session, and no profile row.
+       *
+       * `currentUser` reads `users` by the session's uuid and returns null when there is
+       * no row -- so this is somebody whose credential exists in Supabase Auth but who was
+       * never given a role here. A common enough state to reach by accident, since the
+       * sign-up form creates the credential and then the profile separately.
+       *
+       * The sentence says which half is missing, because "sign-in failed" is what it used
+       * to amount to and that tells the head librarian nothing about what to look at.
+       */
       throw new SupabaseRefusal(
         'no_profile',
-        'You have signed in but you have not been given a role yet. Ask the head librarian.',
+        'You have signed in, but your account has not been set up yet. Ask the head librarian to add you.',
       )
     }
+
+    /*
+     * A switched-off account can still get a session.
+     *
+     * Supabase Auth has no idea our `users.status` column exists, so disabling a
+     * librarian stops what they can *do* -- `can()` reads the status and every permission
+     * becomes false -- but it does not stop Auth handing out a session. Which meant a
+     * person who had been switched off landed on "you have not been given a role yet",
+     * which is not true and sends the head librarian looking for a mistake they did not
+     * make.
+     *
+     * Checked here so the sentence is the right one. The session is left in place rather
+     * than thrown away: `signOut` is the caller's, and a half-finished sign-out is worse
+     * than one the user asked for.
+     */
+    if (user.status !== 'active') {
+      throw new SupabaseRefusal('disabled', 'That account has been switched off. Ask the head librarian.')
+    }
+
     return { ...user, lastLoginAt: new Date().toISOString() }
   }
 
@@ -443,27 +531,42 @@ export class SupabaseApi implements LibraryApi {
   }
 
   /**
-   * Appointing somebody else.
+   * Appointing somebody, as a signed-in administrator.
    *
    * `signUp` replaces the browser's session with the new account's. Left alone, an
    * administrator creating a librarian would be signed out as themselves by the act of
    * appointing them, and would have to type their password again — having just typed
-   * somebody else's.
+   * somebody else's. So the administrator's own tokens are captured before the sign-up and
+   * put back after.
    *
-   * So the administrator's own tokens are captured before the sign-up and put back
-   * after. This is a workaround for a frontend-only build and it is worth being explicit
-   * about what it is: with a server, the service_role key would create the Auth account
-   * and the browser's session would never be touched. Without one, this is the honest
+   * This is a workaround for a frontend-only build and it is worth being explicit about
+   * what it is. With a server, the service_role key would create the Auth account and the
+   * browser's session would never be touched at all. Without one, this is the honest
    * equivalent.
    *
-   * The profile is created by `create_user_account`, which refuses without `users.write`
-   * — so the permission is the database's decision, not the interface's.
+   * The profile is created by `create_user_account`, which refuses without `users.write` —
+   * so the permission is the database's decision, not the interface's.
    */
-  async appointUser(input: CreateUserInput, role: Role = 'assistant'): Promise<User> {
+  async appointUser(input: CreateUserInput): Promise<User> {
     const before = await this.session()
 
     const auth = await this.cfg.auth.signUp(input.email, input.password)
-    if (auth.error) throw new SupabaseRefusal('sign_up_refused', auth.error)
+    if (auth.error) {
+      /*
+       * The same duplicate check the setup path has, with the same wording.
+       *
+       * An administrator retyping somebody already on the staff list is an ordinary
+       * mistake, and "That address could not be registered" is not a thing they can act
+       * on. It is also worth naming the possibility out loud, because after this call the
+       * browser's session may be sitting on the new account rather than their own.
+       */
+      throw new SupabaseRefusal(
+        'sign_up_refused',
+        /\balready\b/i.test(auth.error)
+          ? auth.error
+          : `${auth.error} If that address is already registered, open the Staff list instead.`,
+      )
+    }
     if (!auth.id) throw new SupabaseRefusal('no_account', 'That address could not be registered.')
 
     // Put the administrator back before anything else, so a failure in the next step
@@ -472,7 +575,7 @@ export class SupabaseApi implements LibraryApi {
 
     const made = await this.rpc<{ ok: boolean; id?: string; code?: string; message?: string; role?: string }>(
       'create_user_account',
-      { p_user_id: auth.id, p_email: input.email, p_name: input.name, p_role: role },
+      { p_user_id: auth.id, p_email: input.email, p_name: input.name, p_role: input.role ?? 'assistant' },
     )
     if (!made.ok) throw new SupabaseRefusal(made.code ?? 'refused', made.message ?? 'That did not work.')
 
@@ -480,7 +583,7 @@ export class SupabaseApi implements LibraryApi {
       id: auth.id,
       email: input.email,
       name: input.name,
-      role,
+      role: input.role ?? 'assistant',
       status: 'active',
       lastLoginAt: null,
       createdAt: new Date().toISOString(),

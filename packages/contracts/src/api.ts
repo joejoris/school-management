@@ -228,6 +228,31 @@ export interface LibraryApi {
   createUser(input: CreateUserInput): Promise<User>
 
   /**
+   * Appoints somebody who already has credentials.
+   *
+   * A separate method from `createUser` because the two are genuinely different acts, and
+   * conflating them broke the only way to get a second librarian into the school.
+   *
+   * `createUser` is the *first* librarian. It refuses once any account exists — that is
+   * what stops a second caller becoming an administrator — and it always makes an admin.
+   * The Staff screen was calling it to appoint assistants and teachers, so every attempt
+   * was refused with "This library already has an account. Sign in instead." and nobody
+   * could ever be appointed. Not an edge case: the second librarian was impossible.
+   *
+   * So:
+   *
+   *   createUser   once, on an empty database, always an administrator
+   *   appointUser  every time after that, role as asked, refused without `users.write`
+   *
+   * The role comes from `input.role`, exactly as it does for `createUser`, so the two
+   * calls read alike and a call site is a rename rather than a rewrite.
+   *
+   * The caller stays signed in as themselves throughout, which matters because this is
+   * run by an administrator on a shared desk.
+   */
+  appointUser(input: CreateUserInput): Promise<User>
+
+  /**
    * Verifies a password and opens a session.
    *
    * Rejects with the same message for a bad email, a bad password and a

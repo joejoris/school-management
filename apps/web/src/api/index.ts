@@ -102,11 +102,73 @@ if (mode === 'supabase') {
     async signUp(email, password) {
       const { data, error } = await client.auth.signUp({ email, password })
       if (error) {
-        // "User already registered" is the one case worth naming, because the action is
-        // different: they need to sign in, not try again.
-        if (/already registered|already exists/i.test(error.message)) {
+        /*
+         * "There is already an account with that address" is the one case worth naming,
+         * because the action is different: they need to sign in, not try again.
+         *
+         * Matching Supabase's wording is fragile, and it was wrong here. The pattern was
+         * /already registered|already exists/, and Supabase actually says
+         *
+         *   "A user with this email address has already been registered"
+         *
+         * -- with "been" in the middle. So the first alternative did not match, the
+         * message fell through to the generic "That address could not be registered",
+         * and a librarian who had just created an account was told the opposite.
+         *
+         * Two changes, because one is not enough on its own:
+         *
+         *   · the structured `code` is checked first. Supabase sends
+         *     `user_already_exists` / `email_exists`, which are stable identifiers and do
+         *     not change with a rewording of the sentence.
+         *   · the text fallback then matches on `already` alone. Within a *sign-up* error,
+         *     "already" means a duplicate and nothing else, and a loose match is right where
+         *     a precise one is brittle.
+         */
+        const code = (error as { code?: string }).code ?? ''
+        const isDuplicate =
+          /^(user_already_exists|email_exists)$/i.test(code) || /\balready\b/i.test(error.message ?? '')
+
+        if (isDuplicate) {
           return { id: null, session: false, error: 'There is already an account with that address. Sign in instead.' }
         }
+
+        /*
+         * Everything else, named.
+         *
+         * These were all reported as "That address could not be registered", which is
+         * worse than useless: it is the one thing that did NOT happen, and it gives a
+         * librarian no idea which of the real causes to act on. Four of them are common
+         * enough on a fresh project to be worth a sentence each.
+         *
+         * Matched on Supabase's own wording, so the list is a guess about a string rather
+         * than a contract -- which is why the raw message is logged underneath. If a case
+         * is not listed here it still logs; it just falls back to the generic sentence.
+         */
+        const why = error.message ?? ''
+        if (/password should be at least|password is too weak|at least \d characters/i.test(why)) {
+          return { id: null, session: false, error: 'That password is too short or too simple.' }
+        }
+        if (/signups not allowed|not allowed|signup.*disabled/i.test(why)) {
+          return {
+            id: null,
+            session: false,
+            error: 'New accounts are turned off for this library. Ask the head librarian to create yours.',
+          }
+        }
+        if (/rate limit|too many requests|security purposes/i.test(why)) {
+          return {
+            id: null,
+            session: false,
+            error: 'Too many attempts from this device. Wait a few minutes and try once more.',
+          }
+        }
+        if (/email.*(invalid|not valid|disposable|blocked)/i.test(why)) {
+          return { id: null, session: false, error: 'Supabase will not accept that email address.' }
+        }
+
+        // The raw reason is logged, always. The next version of this list should come
+        // from there rather than from another guess.
+        console.warn('[supabase] sign-up refused:', why, error.status)
         return { id: null, session: false, error: 'That address could not be registered.' }
       }
       return { id: data.user?.id ?? null, session: Boolean(data.session), error: null }
@@ -115,9 +177,37 @@ if (mode === 'supabase') {
     async signIn(email, password) {
       const { data, error } = await client.auth.signInWithPassword({ email, password })
       if (error) {
-        // One sentence for both a wrong password and an unknown address. Saying which
-        // one it was is a detail worth having for an attacker and worthless to the
-        // person standing at the desk.
+        /*
+         * Wrong-password and unknown-address share one sentence on purpose: telling a
+         * caller which of the two it was is worth having to somebody probing for valid
+         * addresses, and worth nothing to the person at the desk.
+         *
+         * Two other causes were being folded into that same sentence, and both are the
+         * librarian's own mistake rather than an attack, so naming them helps and leaks
+         * nothing:
+         *
+         *   · an address that has never been confirmed — Supabase refuses to issue a
+         *     session, and the sentence said the password was wrong, which sends people
+         *     retyping a password that was always correct.
+         *   · the project asking for a CAPTCHA or a rate limit, which is a "not now"
+         *     rather than a "not ever".
+         */
+        const why = error.message ?? ''
+
+        if (/email not confirmed|not confirmed/i.test(why)) {
+          return {
+            id: null,
+            error:
+              'Open the confirmation link we sent you, then sign in. Ask the head librarian if you cannot find it.',
+          }
+        }
+        if (/rate limit|too many requests|security purposes|captcha/i.test(why)) {
+          return { id: null, error: 'Too many attempts from this device. Wait a few minutes and try once more.' }
+        }
+        if (/fetch|network|failed to fetch/i.test(why)) {
+          return { id: null, error: 'Could not reach the library system. Check the connection and try again.' }
+        }
+
         return { id: null, error: 'That email and password do not match.' }
       }
       return { id: data.user?.id ?? null, error: null }

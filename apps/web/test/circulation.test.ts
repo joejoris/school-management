@@ -647,7 +647,7 @@ describe('permissions', () => {
 
   test('an assistant may work the desk', async () => {
     const a = await api.asUser(admin, () =>
-      api.createUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'assistant' }),
+      api.appointUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'assistant' }),
     )
     // Issuing, taking back and reading the register are the job.
     await api.asUser(a.id, () => api.listLoans({ limit: 1, offset: 0 }))
@@ -656,7 +656,7 @@ describe('permissions', () => {
 
   test('an assistant may not change the rules or manage accounts', async () => {
     const a = await api.asUser(admin, () =>
-      api.createUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'assistant' }),
+      api.appointUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'assistant' }),
     )
     // The two things that should not be lying around on a shared desk.
     await assert.rejects(
@@ -666,14 +666,14 @@ describe('permissions', () => {
     await assert.rejects(() => api.asUser(a.id, () => api.runAccrual()), /cannot/i)
     await assert.rejects(() => api.asUser(a.id, () => api.getSettings()), /cannot/i)
     await assert.rejects(
-      () => api.asUser(a.id, () => api.createUser({ email: 'x@y', name: 'X', password: 'p', role: 'assistant' })),
+      () => api.asUser(a.id, () => api.appointUser({ email: 'x@y', name: 'X', password: 'p', role: 'assistant' })),
       /cannot/i,
     )
   })
 
   test('a teacher who borrows is not staff', async () => {
     const t = await api.asUser(admin, () =>
-      api.createUser({ email: 't@teacher', name: 'T', password: 'x', role: 'teacher' }),
+      api.appointUser({ email: 't@teacher', name: 'T', password: 'x', role: 'teacher' }),
     )
     // Read-only. They are a member, not a librarian, and the difference is the
     // point of having the role at all.
@@ -694,7 +694,7 @@ describe('permissions', () => {
 
   test('an override is cleared after a refusal, not left behind', async () => {
     const a = await api.asUser(admin, () =>
-      api.createUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'assistant' }),
+      api.appointUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'assistant' }),
     )
 
     // Restoring in a finally matters. A thrown refusal that leaked the role would
@@ -736,7 +736,7 @@ describe('permissions', () => {
     // access immediately, because the reason for disabling somebody is usually
     // happening right now.
     const a = await api.asUser(admin, () =>
-      api.createUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'admin' }),
+      api.appointUser({ email: 'a@librarian', name: 'A', password: 'x', role: 'admin' }),
     )
     await api.signIn('a@librarian', 'x')
     await api.listLoans({ limit: 1, offset: 0 })

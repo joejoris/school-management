@@ -233,11 +233,23 @@ export class MockApi implements LibraryApi {
   // ── Sessions ─────────────────────────────────────────────────────
 
   async createUser(input: CreateUserInput): Promise<User> {
-    // The very first account is always an admin, whatever was asked for.
-    // Somebody has to be able to create the others, and letting the first
-    // sign-up choose would lock the school out of its own system.
-    const first = this.db.users.length === 0
-    if (!first) this.need('users.write')
+    /*
+     * The setup path. Once, on an empty database, always an administrator.
+     *
+     * It used to accept a second call -- `first` gated the role but not the call -- which
+     * is precisely the fault this whole method has just been separated out to fix. On the
+     * real backend `set_up_library` refuses as soon as any account exists, so the two
+     * implementations disagreed: the mock said yes where the database said no, and the
+     * Staff screen -- which called this -- passed its tests and was broken.
+     *
+     * Refusing here is the honest shape. `appointUser` is for everybody after the first,
+     * and it checks `users.write`.
+     */
+    if (this.db.users.length > 0) {
+      throw new DomainRefusalError(
+        'This library already has an account. Appoint people from the Staff list instead.',
+      )
+    }
 
     if (this.db.users.some((u) => u.email.toLowerCase() === input.email.toLowerCase())) {
       throw new DomainRefusalError('There is already an account with that email address.')
@@ -247,9 +259,13 @@ export class MockApi implements LibraryApi {
       id: `u_${this.db.users.length + 1}`,
       email: input.email,
       name: input.name || input.email,
-      role: first ? 'admin' : input.role,
+      // Always an administrator, whatever was asked for. Somebody has to be able to create
+      // the others, and letting the first sign-up choose would lock the school out of its
+      // own register.
+      role: 'admin',
       status: 'active',
-      lastLoginAt: this.now(),
+      // Null, not `now()`, for the same reason as in appointUser: nobody has signed in yet.
+      lastLoginAt: null,
       createdAt: this.now(),
     }
     this.db.users.push(user)
@@ -266,6 +282,57 @@ export class MockApi implements LibraryApi {
      * `signIn` is the only thing that grants a session — one door rather than two,
      * so there is no way to hold a session that was never signed in through.
      */
+    return user
+  }
+
+  /**
+   * Appoints somebody who already has credentials.
+   *
+   * Separate from `createUser` because the two are different acts, and the difference
+   * matters. `createUser` is the *first* librarian -- once, on an empty database, always
+   * an administrator. `appointUser` is every librarian after that, with the role the form
+   * chose, and it refuses without `users.write`.
+   *
+   * The Staff screen was calling `createUser` for this, which on the real backend means
+   * `set_up_library`, and that refuses the moment any account exists. So appointing a
+   * second librarian was impossible in the app, and entirely untested, because *this*
+   * implementation had always been permissive: the mock said yes where the database said
+   * no, so every screen test passed.
+   *
+   * Worth recording. A fake that is more forgiving than the thing it stands in for does
+   * not merely fail to catch bugs -- it hides them, and the suite is green precisely
+   * because it is wrong.
+   */
+  async appointUser(input: CreateUserInput): Promise<User> {
+    /*
+     * `users.write`, and nothing weaker.
+     *
+     * This is the check the real `create_user_account` makes, and it is the reason the two
+     * methods exist rather than one method with a flag. A librarian with desk permissions
+     * can issue books all day and cannot appoint a colleague, because being able to make
+     * an administrator is a different power from being allowed to run a register.
+     */
+    this.need('users.write')
+
+    if (this.db.users.some((u) => u.email.toLowerCase() === input.email.toLowerCase())) {
+      throw new DomainRefusalError('There is already an account with that email address.')
+    }
+
+    const user: User = {
+      id: `u_${this.db.users.length + 1}`,
+      email: input.email,
+      name: input.name || input.email,
+      role: input.role ?? 'assistant',
+      status: 'active',
+      // Null, not `now()`. Appointing somebody is not them arriving: they have not signed
+      // in yet, and a sign-in timestamp for an account nobody has used is a small lie in
+      // a column somebody will read to work out who has been on the desk.
+      lastLoginAt: null,
+      createdAt: this.now(),
+    }
+    this.db.users.push(user)
+    // The administrator's own session is untouched -- on the real backend `signUp`
+    // replaces the browser's session, and that is where it gets put back.
     return user
   }
 
