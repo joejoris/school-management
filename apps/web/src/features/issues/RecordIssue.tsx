@@ -69,6 +69,7 @@ import { BookPlus, TriangleAlert } from '../../components/icons'
 interface Draft {
   memberCode: string
   studentName: string
+  admission: string
   form: string
   stream: string
   grade: string
@@ -95,6 +96,7 @@ const today = () => todayLocal()
 const emptyDraft = (): Draft => ({
   memberCode: '',
   studentName: '',
+  admission: '',
   form: '',
   stream: '',
   grade: '',
@@ -216,7 +218,7 @@ export function RecordIssue() {
       )
       // The form is cleared but the member is kept: somebody issuing four books
       // to one student in a row should not retype the number each time.
-      setDraft({ ...emptyDraft(), memberCode: draft.memberCode, studentName: draft.studentName })
+      setDraft({ ...emptyDraft(), memberCode: draft.memberCode, studentName: draft.studentName, admission: draft.admission })
       await queryClient.invalidateQueries({ queryKey: ['loans'] })
       await queryClient.invalidateQueries({ queryKey: ['member-by-code'] })
     },
@@ -327,6 +329,33 @@ export function RecordIssue() {
               {unknownMember && search.data && search.data.items.length === 0 ? (
                 <p className="rounded-lg border border-accent bg-accent/40 px-4 py-3 text-sm text-muted-foreground">
                   Nobody with that name is on file. Add them from the Students screen first.
+                </p>
+              ) : null}
+
+              {/*
+               * The admission number, as the other way in. Not the primary one, because
+               * a face is what reaches the desk. But every student has a number on their
+               * card, and a librarian who has it should not have to be told to type the
+               * name instead. Typed, it fills in the same record the name search picks.
+               */}
+              <Field label="Admission number" htmlFor="admission" hint="If you know it — otherwise use the name above.">
+                <Input
+                  id="admission"
+                  value={draft.admission}
+                  onChange={(e) => {
+                    set('admission', e.target.value)
+                    set('memberCode', e.target.value.trim())
+                  }}
+                  placeholder="S001"
+                  autoComplete="off"
+                  inputMode="text"
+                  className="numeric"
+                />
+              </Field>
+
+              {draft.admission.trim() && !member.isPending && !member.data ? (
+                <p className="rounded-lg border border-accent bg-accent/40 px-4 py-3 text-sm text-muted-foreground">
+                  No student with that number on file. Check it against their card, or use the name above.
                 </p>
               ) : null}
 
