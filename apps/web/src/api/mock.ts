@@ -642,10 +642,28 @@ export class MockApi implements LibraryApi {
       copy.status = input.toShelf === false ? 'at_desk' : 'on_shelf'
       copy.condition = input.conditionIn
     }
+    /*
+     * The first hold in the queue, and only that one — the live `return_book`
+     * fills it, pins the returned copy to it and gives the member three days to
+     * collect. Their record then reads "ready", not "waiting".
+     */
+    const promoted = copy
+      ? this.db.holds
+          .filter((h) => h.titleId === copy.titleId && h.status === 'open')
+          .sort((a, b) => a.placedAt.localeCompare(b.placedAt))[0]
+      : undefined
+    if (promoted) {
+      promoted.status = 'filled'
+      promoted.copyId = loan.copyId
+      promoted.expiresAt = new Date(Date.parse(returnedAt) + 3 * DAY).toISOString()
+      this.auditWrite('hold_filled', 'hold', promoted.id, {
+        after: { member_id: promoted.memberId, copy_id: loan.copyId },
+      })
+    }
     this.auditWrite('return', 'loan', loan.id, {
       after: { copy_id: loan.copyId, condition_in: input.conditionIn },
     })
-    return { ok: true, loan, holdPromoted: false }
+    return { ok: true, loan, holdPromoted: promoted !== undefined }
   }
 
   async markLost(loanId: string, reason: string): Promise<ReturnResult> {
@@ -1029,12 +1047,9 @@ export class MockApi implements LibraryApi {
   // ── Holds ─────────────────────────────────────────────────────────
 
   async placeHold(input: PlaceHoldInput): Promise<Hold> {
-    this.need('holds.read')
+    this.need('holds.write')
     const member = this.db.members.find((m) => m.id === input.memberId)
     if (!member) throw new DomainRefusalError('No such member.')
-    if (!this.typeFor(member.type).canPlaceHolds) {
-      throw new DomainRefusalError('That member cannot place holds.')
-    }
     const hold: Hold = {
       id: `h_${this.db.holds.length + 1}`,
       memberId: input.memberId,
@@ -1049,7 +1064,7 @@ export class MockApi implements LibraryApi {
   }
 
   async cancelHold(id: string): Promise<Hold> {
-    this.need('holds.read')
+    this.need('holds.write')
     const h = this.db.holds.find((x) => x.id === id)
     if (!h) throw new DomainRefusalError('No such hold.')
     h.status = 'cancelled'

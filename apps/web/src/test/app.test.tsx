@@ -2025,3 +2025,106 @@ describe('the audit log', () => {
     expect(screen.queryByText(/showing 1–/)).not.toBeInTheDocument()
   })
 })
+
+/*
+ * Holds.
+ *
+ * A hold is the promise that the first member in line gets the next copy back,
+ * written down at the desk in front of the student. The domain wrote it before
+ * any screen could reach it; these tests read the two screens that can. The
+ * mock mirrors the live `return_book`: a return promotes the first hold into a
+ * "filled" hold with three days to collect, which is why a record stops saying
+ * "waiting since" and starts saying "ready — collect by".
+ */
+describe('holds', () => {
+  test('a title with no copies left can be held for a student, and the queue shows it', async () => {
+    const { user } = await mountSignedIn('/catalogue', async () => {
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+      await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
+      // One copy, and it is out: the hold is for a book somebody is holding.
+      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const out = await api.checkout({
+        memberCode: 'S001',
+        barcode: (await api.getTitle(t.id)).copies[0]!.barcode,
+      })
+      if (!out.ok) throw new Error(out.message)
+    })
+
+    // Open the title: nothing is waiting yet.
+    await user.click(await screen.findByRole('button', { name: /things we carry/i }))
+    expect(await screen.findByText('Nobody is waiting for this title.')).toBeInTheDocument()
+
+    // Hold it for the second student, by admission number.
+    await user.type(screen.getByLabelText(/hold for a student/i), 'S002')
+    await user.click(screen.getByRole('button', { name: /^hold$/i }))
+
+    // The queue names the person in line. The code and the name sit in separate
+    // elements (the code is the number on a register, the name the person), so
+    // each gets its own assertion, as on the students screen.
+    expect(await screen.findByText(/Second Student/)).toBeInTheDocument()
+    expect(screen.getByText('S002')).toBeInTheDocument()
+    expect(screen.getByText(/^since /)).toBeInTheDocument()
+
+    // …and the same queue lets the hold go again.
+    await user.click(screen.getByRole('button', { name: /^cancel$/i }))
+    expect(await screen.findByText('Nobody is waiting for this title.')).toBeInTheDocument()
+  })
+
+  test('returning the book fills the first hold: the record says ready, the log says hold_filled', async () => {
+    const { user } = await mountSignedIn('/students', async () => {
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+      await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
+      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const out = await api.checkout({
+        memberCode: 'S001',
+        barcode: (await api.getTitle(t.id)).copies[0]!.barcode,
+      })
+      if (!out.ok) throw new Error(out.message)
+      const second = await api.findMemberByCode('S002')
+      await api.placeHold({ memberId: second!.id, titleId: t.id })
+
+      // The book comes back into a queue of one. The mock mirrors the live
+      // `return_book` here: the first open hold is filled and pinned to the
+      // returned copy.
+      const back = await api.returnLoan({ loanId: out.loan.id, conditionIn: 'good' })
+      expect(back.ok).toBe(true)
+      if (back.ok) expect(back.holdPromoted).toBe(true)
+
+      // The audit row the live return writes beside the filled hold.
+      const log = await api.getAuditLog({ entityType: 'hold', limit: 5, offset: 0 })
+      expect(log.items.map((a) => a.action)).toContain('hold_filled')
+    })
+
+    // Open the second student's record: the wait has become a book ready for them.
+    await user.click(await screen.findByRole('button', { name: /s002/i }))
+    expect(await screen.findByText('Things We Carry')).toBeInTheDocument()
+    expect(screen.getByText(/ready — collect by/i)).toBeInTheDocument()
+    expect(screen.queryByText(/waiting since/i)).not.toBeInTheDocument()
+  })
+
+  test('an assistant can read the queue but is refused, in words, when writing a hold', async () => {
+    const { user } = await mountSignedIn('/catalogue', async () => {
+      await api.appointUser({
+        email: 'desk@dandorasecondary.go.ke',
+        name: 'Pendo Wanjiru',
+        password: 'x',
+        role: 'assistant',
+      })
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      await api.signOut()
+      await api.signIn('desk@dandorasecondary.go.ke', 'x')
+    })
+
+    // The queue itself is readable at the desk.
+    await user.click(await screen.findByRole('button', { name: /things we carry/i }))
+    expect(await screen.findByText('Nobody is waiting for this title.')).toBeInTheDocument()
+
+    // Writing one is not, and the sentence comes back rather than nothing.
+    await user.type(screen.getByLabelText(/hold for a student/i), 'S001')
+    await user.click(screen.getByRole('button', { name: /^hold$/i }))
+    expect(
+      await screen.findByText(/your role \(assistant\) cannot holds write\./i),
+    ).toBeInTheDocument()
+  })
+})

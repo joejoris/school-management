@@ -226,6 +226,8 @@ function StudentRow({
                 </ul>
               )}
 
+              <HoldList memberId={student.id} />
+
               <LoanHistory memberId={student.id} />
 
               <FineLedger
@@ -246,6 +248,97 @@ function StudentRow({
         </div>
       ) : null}
     </Card>
+  )
+}
+
+/**
+ * What this student is waiting for, and what is waiting for them.
+ *
+ * A hold is either open — they asked, and the book has not come back yet — or
+ * filled — the book came back, and they have three days to collect it before it
+ * passes to the next person in line. A record that only said "waiting" would
+ * not answer the question the student actually asks ("did my book come?"), so
+ * the filled holds say "ready" instead.
+ *
+ * Cancellation is an administrator's act, like writing the hold in the first
+ * place, and it shows for open holds only: a filled hold is a promise already
+ * made to the next person in line too.
+ */
+function HoldList({ memberId }: { memberId: string }) {
+  const queryClient = useQueryClient()
+  const [error, setError] = useState<string | null>(null)
+
+  const holds = useQuery({
+    queryKey: ['holds', memberId],
+    queryFn: async () => {
+      const all = await api.listHoldsForMember(memberId)
+      // Expired and cancelled holds are yesterday's news; what the desk needs is
+      // a wait in progress or a book held for them.
+      const relevant = all.filter((h) => h.status === 'open' || h.status === 'filled')
+      const titles = await Promise.all(relevant.map((h) => api.getTitle(h.titleId)))
+      return relevant.map((h, i) => ({ hold: h, title: titles[i]!.title }))
+    },
+    staleTime: 5_000,
+  })
+
+  const cancel = useMutation({
+    mutationFn: (id: string) => api.cancelHold(id),
+    onSuccess: async () => {
+      setError(null)
+      await queryClient.invalidateQueries({ queryKey: ['holds', memberId] })
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not cancel that hold.'),
+  })
+
+  if (holds.isPending) return null
+  if (holds.isError) {
+    return (
+      <p role="alert" className="mt-5 border-t border-border pt-4 text-sm text-destructive">
+        Could not load what they are waiting for.
+      </p>
+    )
+  }
+  if (holds.data!.length === 0) return null
+
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <h3 className="text-sm font-medium">Waiting for</h3>
+      <ul className="mt-2 grid gap-1.5">
+        {holds.data!.map(({ hold, title }) => (
+          <li
+            key={hold.id}
+            className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-card px-3 py-2 text-sm"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="block truncate">{title}</span>
+              <span className="text-xs text-muted-foreground">
+                {hold.status === 'open'
+                  ? `waiting since ${date(hold.placedAt)}`
+                  : hold.expiresAt
+                    ? `ready — collect by ${date(hold.expiresAt)}`
+                    : 'ready'}
+              </span>
+            </span>
+            {hold.status === 'open' ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={cancel.isPending}
+                onClick={() => cancel.mutate(hold.id)}
+              >
+                Cancel
+              </Button>
+            ) : null}
+          </li>
+        ))}
+      </ul>
+      {error ? (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
   )
 }
 

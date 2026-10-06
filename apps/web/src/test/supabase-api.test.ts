@@ -656,3 +656,97 @@ describe('the audit log on the live database', () => {
     }
   })
 })
+
+/*
+ * Holds, on the live database.
+ *
+ * There is no RPC for a hold: the table is written and read directly through
+ * REST, behind `holds.write`. These tests are the contract for that wire
+ * shape — the snake_case columns, the open-only queue in placement order, and
+ * the two verbs that sit on the same table.
+ */
+describe('holds against the live database', () => {
+  test('the queue asks for open holds only, in placement order, and maps the columns', async () => {
+    const s = stub([
+      {
+        json: [
+          {
+            id: 'h_1',
+            member_id: 'm_2',
+            title_id: 't_1',
+            placed_at: '2026-10-01T08:00:00.000Z',
+            copy_id: null,
+            expires_at: null,
+            status: 'open',
+          },
+        ],
+      },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const queue = await api.getHoldQueue('t_1')
+
+      const asked = decodeURIComponent(s.calls[0]!.url)
+      expect(asked).toContain('/holds?')
+      expect(asked).toContain('title_id=eq.t_1')
+      expect(asked).toContain('status=eq.open')
+      expect(asked).toContain('order=placed_at')
+
+      expect(queue[0]).toMatchObject({
+        id: 'h_1',
+        memberId: 'm_2',
+        titleId: 't_1',
+        placedAt: '2026-10-01T08:00:00.000Z',
+        status: 'open',
+      })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('placing a hold is a POST to the table, with the columns the table has', async () => {
+    const s = stub([{ json: [] }])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      await api.placeHold({ memberId: 'm_2', titleId: 't_1' })
+
+      const [first] = s.calls
+      expect(first!.method).toBe('POST')
+      // A raw insert carries no query string; the row goes in the body.
+      expect(decodeURIComponent(first!.url)).toMatch(/\/rest\/v1\/holds$/)
+      // `snakeize` at the boundary: a raw insert cannot send camelCase columns.
+      expect(first!.body).toEqual({ member_id: 'm_2', title_id: 't_1', status: 'open' })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('cancelling a hold is a PATCH, and the re-read asks for the one row', async () => {
+    const s = stub([
+      { json: [] },
+      { json: [{ id: 'h_1', member_id: 'm_2', title_id: 't_1', status: 'cancelled' }] },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const cancelled = await api.cancelHold('h_1')
+
+      const [patch, reread] = s.calls
+      expect(patch!.method).toBe('PATCH')
+      expect(decodeURIComponent(patch!.url)).toContain('/holds?')
+      expect(decodeURIComponent(patch!.url)).toContain('id=eq.h_1')
+      expect(patch!.body).toEqual({ status: 'cancelled' })
+      // The re-read (`one`) asks for the one row by id, with every column.
+      expect(decodeURIComponent(reread!.url)).toMatch(/holds\?.*select=\*.*id=eq\.h_1/)
+
+      expect(cancelled).toMatchObject({ id: 'h_1', status: 'cancelled' })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})

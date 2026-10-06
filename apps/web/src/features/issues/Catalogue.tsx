@@ -32,6 +32,8 @@ import { Button, Card, Field, Input, cn } from '../../components/ui'
 import { BookPlus, Plus, Search, TriangleAlert } from '../../components/icons'
 import { CopyActions } from './CopyActions'
 
+const date = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { dateStyle: 'medium' })
+
 /** How a copy's status reads on the shelf. */
 const STATUS_LABEL: Record<string, string> = {
   on_shelf: 'On the shelf',
@@ -276,6 +278,8 @@ function TitleRow({
                   <Plus /> Add
                 </Button>
               </div>
+
+              <WaitingList titleId={title.id} />
             </>
           )}
         </div>
@@ -292,6 +296,135 @@ function TitleRow({
  */
 function isWholeNumber(v: string): boolean {
   return /^[1-9]\d*$/.test(v.trim())
+}
+
+/**
+ * Who is waiting for a title, and how the desk adds the next person.
+ *
+ * A hold is the promise that the first member in line gets the next copy back.
+ * That promise hangs on the title, not on any one copy, so it lives here beside
+ * the copies — and it is written down at the desk, in front of the student,
+ * which is the only honest way to take an order for a book that is out.
+ *
+ * Placement and cancellation are administrators' acts (`holds.write`), the same
+ * permission the live database hangs on the holds table; every other screen in
+ * the app hands an unfamiliar user the domain's refusal sentence rather than
+ * hiding the control, and this one does the same.
+ */
+function WaitingList({ titleId }: { titleId: string }) {
+  const queryClient = useQueryClient()
+  const [code, setCode] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  const queue = useQuery({
+    queryKey: ['queue', titleId],
+    queryFn: async () => {
+      const holds = await api.getHoldQueue(titleId)
+      // The queue is people first: a list of ids would make the desk count.
+      const members = await Promise.all(holds.map((h) => api.getMember(h.memberId)))
+      return holds.map((h, i) => ({ hold: h, member: members[i]! }))
+    },
+    staleTime: 5_000,
+  })
+
+  const place = useMutation({
+    mutationFn: async () => {
+      const member = await api.findMemberByCode(code.trim())
+      if (!member) throw new Error('No member with that admission number.')
+      await api.placeHold({ memberId: member.id, titleId })
+    },
+    onSuccess: async () => {
+      setCode('')
+      setError(null)
+      await queryClient.invalidateQueries({ queryKey: ['queue', titleId] })
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not place that hold.'),
+  })
+
+  const cancel = useMutation({
+    mutationFn: (id: string) => api.cancelHold(id),
+    onSuccess: async () => {
+      setError(null)
+      await queryClient.invalidateQueries({ queryKey: ['queue', titleId] })
+    },
+    onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not cancel that hold.'),
+  })
+
+  const rows = queue.data ?? []
+
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <h4 className="text-sm font-medium">Waiting list</h4>
+
+      {queue.isError ? (
+        <p role="alert" className="mt-1 text-sm text-destructive">
+          Could not load the waiting list.
+        </p>
+      ) : queue.isPending ? (
+        <p className="mt-1 text-sm text-muted-foreground">Loading…</p>
+      ) : rows.length === 0 ? (
+        <p className="mt-1 text-sm text-muted-foreground">Nobody is waiting for this title.</p>
+      ) : (
+        <ol className="mt-2 grid gap-1.5">
+          {rows.map(({ hold, member }, i) => (
+            <li
+              key={hold.id}
+              className="flex flex-wrap items-center justify-between gap-2 rounded-md bg-card px-3 py-2 text-sm"
+            >
+              <span className="flex min-w-0 items-baseline gap-2">
+                <span className="numeric text-muted-foreground">{i + 1}.</span>
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">
+                    <span className="numeric">{member.memberCode}</span> — {member.firstName}{' '}
+                    {member.lastName}
+                  </span>
+                  <span className="text-xs text-muted-foreground">since {date(hold.placedAt)}</span>
+                </span>
+              </span>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                disabled={cancel.isPending}
+                onClick={() => cancel.mutate(hold.id)}
+              >
+                Cancel
+              </Button>
+            </li>
+          ))}
+        </ol>
+      )}
+
+      <div className="mt-3 flex flex-wrap items-end gap-3">
+        <div className="w-40">
+          <Field label="Hold for a student" htmlFor={`hold-${titleId}`}>
+            <Input
+              id={`hold-${titleId}`}
+              value={code}
+              onChange={(e) => setCode(e.target.value)}
+              placeholder="Admission number"
+              autoCapitalize="characters"
+              className="numeric"
+            />
+          </Field>
+        </div>
+        <Button
+          type="button"
+          variant="outline"
+          disabled={place.isPending || code.trim().length === 0}
+          onClick={() => place.mutate()}
+        >
+          {place.isPending ? 'Holding…' : 'Hold'}
+        </Button>
+      </div>
+
+      {error ? (
+        <p role="alert" className="mt-2 text-sm text-destructive">
+          {error}
+        </p>
+      ) : null}
+    </div>
+  )
 }
 
 /**
