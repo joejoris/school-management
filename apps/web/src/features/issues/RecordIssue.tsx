@@ -25,7 +25,7 @@
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { api } from '../../api'
-import { GRADE_SUGGESTIONS } from '@library/contracts'
+import { FORM_SUGGESTIONS, GRADE_SUGGESTIONS } from '@library/contracts'
 import { startOfLocalDay, todayLocal } from '../../lib/dates'
 import { Button, Card, CardContent, Field, Input, cn } from '../../components/ui'
 import { BookPlus, TriangleAlert } from '../../components/icons'
@@ -65,31 +65,6 @@ export function RecordIssue() {
 
   const set = <K extends keyof Draft>(key: K, value: Draft[K]) =>
     setDraft((d) => ({ ...d, [key]: value }))
-
-  /*
-   * Suggestions come from what this school has actually recorded.
-   *
-   * Not from a fixed list. "Form 1..4" is a guess about a Kenyan secondary
-   * school, and a school that calls them Years 1–4 would get a list it has to
-   * argue with. Suggesting from real usage means the field is right for this
-   * school on the first day it is used.
-   */
-  const used = useQuery({
-    queryKey: ['used-values'],
-    queryFn: async () => {
-      const page = await api.searchMembers({ limit: 200, offset: 0 })
-      const forms = new Set<string>()
-      const grades = new Set<string>()
-      for (const m of page.items) {
-        if (m.form) forms.add(m.form)
-        if (m.grade) grades.add(m.grade)
-      }
-      return {
-        forms: [...forms].sort(),
-        grades: [...grades].sort(),
-      }
-    },
-  })
 
   /*
    * The member is looked up as the number is typed, not on submit.
@@ -241,7 +216,7 @@ export function RecordIssue() {
                         placeholder="Kept Student"
                       />
                     </Field>
-                    <Field label="Form" htmlFor="form" hint="Suggested from your records.">
+                    <Field label="Form" htmlFor="form" hint="Form 3 or Form 4.">
                       <Input
                         id="form"
                         value={draft.form}
@@ -250,7 +225,7 @@ export function RecordIssue() {
                         placeholder="Form 3"
                       />
                       <datalist id="form-suggestions">
-                        {(used.data?.forms ?? []).map((v) => (
+                        {FORM_SUGGESTIONS.map((v) => (
                           <option key={v} value={v} />
                         ))}
                       </datalist>
