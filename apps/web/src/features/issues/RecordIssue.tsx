@@ -345,11 +345,6 @@ export function RecordIssue() {
                 />
               </Field>
 
-              {draft.admission.trim() && !member.isPending && !member.data ? (
-                <p className="rounded-lg border border-accent bg-accent/40 px-4 py-3 text-sm text-muted-foreground">
-                  No student with that number on file. Check it against their card, or use the name above.
-                </p>
-              ) : null}
 
               {/*
                 Who this is, once the number is recognised.
