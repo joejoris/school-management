@@ -12,26 +12,20 @@
  * administrator wants and a librarian does not, and it pushes the one field they
  * need off the screen on a phone.
  *
- * ── Finding the student ──────────────────────────────────────────
+ * ── The rule about invented data ─────────────────────────────────────
  *
- * The desk starts from a face, not a code, so the student's name is the primary box
- * and the admission number is the secondary one. Both feed the same record: pick a
- * name from the suggestions, or type the number on the card. Either way the loan is
- * made against that student's memberCode, so a name and a number can never disagree.
+ * A member number that is not on file does not create a student. It says so, and
+ * offers to create one deliberately — because silently inventing a student means
+ * the register contains a person who does not exist, and a school cannot audit
+ * its way out of that.
  *
- * The bus number is the other half of the record. Stream, Form and Grade come from
- * the student's record and are read-only here — issuing a book must never rewrite an
- * enrolment. Form and Grade suggest from the school's own lists; Stream is free text.
- *
- * A name that matches nobody shows nothing and the button stays shut, and a mistyped
- * number is simply no answer. Neither says the librarian has done something wrong:
- * getting students on file is always deliberate, and nothing here invents one.
+ * Stream is free text. Form and Grade suggest from what this school has actually
+ * used, and a suggestion that guesses wrong is worse than an empty field.
  */
 import { useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import { FORM_SUGGESTIONS, GRADE_SUGGESTIONS } from '@library/contracts'
 import { api } from '../../api'
-import { isFutureLocalDay, startOfLocalDay, todayLocal } from '../../lib/dates'
+import { startOfLocalDay, todayLocal } from '../../lib/dates'
 import { Button, Card, CardContent, Field, Input, cn } from '../../components/ui'
 import { BookPlus, TriangleAlert } from '../../components/icons'
 
@@ -39,37 +33,25 @@ import { BookPlus, TriangleAlert } from '../../components/icons'
 interface Draft {
   memberCode: string
   studentName: string
-  admission: string
   form: string
   stream: string
   grade: string
+  className: string
   title: string
   barcode: string
   dateTaken: string
   dueDate: string
 }
 
-/*
- * "Today" is the reader's own calendar day.
- *
- * This used to be `new Date().toISOString().slice(0, 10)`, which is **UTC**. West of
- * Greenwich that is already tomorrow for part of every evening, and the day typed
- * into the form was then read back as *local* — so a book taken "today" was stamped
- * eight hours into the future and `returnLoan` refused it with "A book cannot come
- * back before it went out." Every return button in the app was dead, and the domain
- * was right to refuse: the book genuinely had not gone out yet.
- *
- * The reasoning is in lib/dates.ts, and there is a test that fails without this.
- */
 const today = () => todayLocal()
 
 const emptyDraft = (): Draft => ({
   memberCode: '',
   studentName: '',
-  admission: '',
   form: '',
   stream: '',
   grade: '',
+  className: '',
   title: '',
   barcode: '',
   dateTaken: today(),
@@ -86,19 +68,29 @@ export function RecordIssue() {
     setDraft((d) => ({ ...d, [key]: value }))
 
   /*
-   * Suggestions come from the school's own list, not from what happens to be in the
-   * register.
+   * Suggestions come from what this school has actually recorded.
    *
-   * An earlier version derived them from the 200 most recent students. That sounds
-   * clever and is wrong twice over: it reads the whole member list on every page
-   * load to produce two short strings, and it makes the suggestions depend on what
-   * has been typed recently rather than on what the school uses. A school with no
-   * students yet — which is every school on the day it starts — got an empty list
-   * and therefore no help at all.
-   *
-   * The lists are two short arrays in the domain layer now, where the school can
-   * change them without anybody editing a screen.
+   * Not from a fixed list. "Form 1..4" is a guess about a Kenyan secondary
+   * school, and a school that calls them Years 1–4 would get a list it has to
+   * argue with. Suggesting from real usage means the field is right for this
+   * school on the first day it is used.
    */
+  const used = useQuery({
+    queryKey: ['used-values'],
+    queryFn: async () => {
+      const page = await api.searchMembers({ limit: 200, offset: 0 })
+      const forms = new Set<string>()
+      const grades = new Set<string>()
+      for (const m of page.items) {
+        if (m.form) forms.add(m.form)
+        if (m.grade) grades.add(m.grade)
+      }
+      return {
+        forms: [...forms].sort(),
+        grades: [...grades].sort(),
+      }
+    },
+  })
 
   /*
    * The member is looked up as the number is typed, not on submit.
@@ -116,65 +108,18 @@ export function RecordIssue() {
     retry: false,
   })
 
-  const knownMember = member.data
-
-  /*
-   * Find the student by name, as the person at the desk actually knows them.
-   *
-   * Admission numbers are for the register. The librarian reads a student's face and
-   * name, not a code off the card, so the search matches on name and the code falls
-   * out of the chosen record.
-   */
-  const search = useQuery({
-    queryKey: ['member-search', draft.studentName.trim()],
-    queryFn: () => api.searchMembers({ limit: 50, offset: 0, q: draft.studentName.trim() }),
-    enabled: draft.studentName.trim().length > 1 && !knownMember,
-    staleTime: 10_000,
-    retry: false,
-  })
-
   const save = useMutation({
     mutationFn: async () => {
-      /*
-       * A day in the future is refused here, at the field that caused it.
-       *
-       * It has to be. A loan stamped for next week is a loan that cannot be returned
-       * until next week, and the person who typed it has no way to tell that from a
-       * broken application — they pressed Record and nothing happened for a week.
-       * Told here, they are looking at the date they typed and can fix it.
-       */
-      if (draft.dateTaken && isFutureLocalDay(draft.dateTaken)) {
-        throw new Error('A book cannot be taken out on a date that has not happened yet.')
-      }
-
-      const code = draft.memberCode.trim()
-
-      /*
-       * Identify the student by name, not by a typed code. The chosen record's
-       * memberCode is what makes the checkout, so there is no chance of a code
-       * disagreeing with the name on it.
-       */
-      if (!knownMember) {
-        throw new Error(
-          'No student matched that name. Pick the student from the list above, or add them from the Students screen first.',
-        )
-      }
-
       const result = await api.checkout({
-        memberCode: code,
+        memberCode: draft.memberCode.trim(),
         barcode: draft.barcode.trim(),
         dueAt: draft.dueDate || undefined,
-        /*
-         * Local midnight of the typed day, not 08:00.
-         *
-         * The `T08:00:00` this replaced was a fiction: "taken today" was stored as
-         * "taken at eight in the morning" whatever the time actually was, so for the
-         * first eight hours of every day a book taken today could not be returned
-         * until eight the next morning. Midnight is the earliest instant the typed
-         * day could have been, which makes the impossible ordering — returned before
-         * it went out — unreachable rather than merely unlikely.
-         */
         checkedOutAt: draft.dateTaken ? startOfLocalDay(draft.dateTaken) : undefined,
+        studentName: draft.studentName.trim() || undefined,
+        form: draft.form || undefined,
+        stream: draft.stream || undefined,
+        grade: draft.grade || undefined,
+        className: draft.className || undefined,
       })
       if (!result.ok) throw new Error(result.message)
       return result
@@ -188,7 +133,7 @@ export function RecordIssue() {
       )
       // The form is cleared but the member is kept: somebody issuing four books
       // to one student in a row should not retype the number each time.
-      setDraft({ ...emptyDraft(), memberCode: draft.memberCode, studentName: draft.studentName, admission: draft.admission })
+      setDraft({ ...emptyDraft(), memberCode: draft.memberCode, studentName: draft.studentName })
       await queryClient.invalidateQueries({ queryKey: ['loans'] })
       await queryClient.invalidateQueries({ queryKey: ['member-by-code'] })
     },
@@ -202,16 +147,16 @@ export function RecordIssue() {
     },
   })
 
-  const canSubmit = Boolean(knownMember) && draft.barcode.trim().length > 0
-  const locked = Boolean(knownMember)
-
+  const canSubmit = draft.memberCode.trim().length > 0 && draft.barcode.trim().length > 0
+  const knownMember = member.data
+  const unknownMember = draft.memberCode.trim().length > 2 && !member.isPending && !knownMember
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 py-2">
       <header>
         <h1 className="text-xl font-semibold tracking-tight">Record a book issue</h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          The student and the book number are all that is required. Find the student by name.
+          The admission number and the book number are all that is required.
         </p>
       </header>
 
@@ -250,169 +195,100 @@ export function RecordIssue() {
                 <BookPlus className="size-4" /> Student
               </legend>
 
-              <Field label="Student's name" htmlFor="studentName" hint="Start typing — the register searches as you go.">
+              <Field label="Admission number" htmlFor="memberCode" hint="As written on their card, including any leading zero.">
                 <Input
-                  id="studentName"
-                  value={draft.studentName}
-                  onChange={(e) => set('studentName', e.target.value)}
-                  placeholder="Kept Student"
+                  id="memberCode"
+                  value={draft.memberCode}
+                  onChange={(e) => set('memberCode', e.target.value)}
+                  placeholder="S001"
                   autoComplete="off"
+                  inputMode="text"
+                  className="numeric"
                   // The one field the form is about. Everything else can wait.
                   autoFocus
                 />
               </Field>
 
-              {/*
-                Matching students. Tap one to pick them -- the chosen record's code is
-                what makes the loan, so a name and a code can never disagree.
-              */}
-              {search.data && search.data.items.length > 0 && !knownMember ? (
-                <ul className="grid gap-1.5">
-                  <li className="text-xs tracking-wide text-muted-foreground uppercase">Tap the student you mean</li>
-                  {search.data.items.map((s) => (
-                    <li key={s.id}>
-                      <button
-                        type="button"
-                        className="w-full rounded-lg border border-border px-3 py-2 text-left text-sm hover:bg-accent/40"
-                        onClick={() => {
-                          set('memberCode', s.memberCode)
-                          set('studentName', `${s.firstName} ${s.lastName}`)
-                        }}
-                      >
-                        <span className="font-medium">{s.firstName} {s.lastName}</span>
-                        <span className="text-muted-foreground"> — {s.memberCode}</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              ) : null}
-
-              {/*
-               * The admission number, as the other way in. Not the primary one, because
-               * a face is what reaches the desk. But every student has a number on their
-               * card, and a librarian who has it should not have to be told to type the
-               * name instead. Typed, it fills in the same record the name search picks.
-               */}
-              <Field label="Admission number" htmlFor="admission" hint="If you know it — otherwise use the name above.">
-                <Input
-                  id="admission"
-                  value={draft.admission}
-                  onChange={(e) => {
-                    set('admission', e.target.value)
-                    set('memberCode', e.target.value.trim())
-                  }}
-                  placeholder="S001"
-                  autoComplete="off"
-                  inputMode="text"
-                  className="numeric"
-                />
-              </Field>
-
-
-              {/*
-                Who this is, once the number is recognised.
-
-                Every field below is shown from their record rather than left blank,
-                because an empty box beside a known student's name reads as "no
-                information" when it actually means "look it up".
-              */}
               {knownMember ? (
-                <div className="rounded-lg border border-primary/25 bg-primary/5 px-4 py-3 text-sm">
-                  <p>
-                    <strong className="font-medium">
-                      {knownMember.firstName} {knownMember.lastName}
-                    </strong>
-                    <span className="text-muted-foreground">
-                      {' — '}
-                      {[
-                        knownMember.form,
-                        knownMember.stream,
-                        knownMember.grade ? `Grade ${knownMember.grade}` : null,
-                      ]
-                        .filter(Boolean)
-                        .join(', ') || 'no form or grade on file'}
-                    </span>
-                  </p>
-                </div>
+                <p className="rounded-md bg-secondary px-3 py-2 text-sm text-secondary-foreground">
+                  <strong className="font-medium">
+                    {knownMember.firstName} {knownMember.lastName}
+                  </strong>
+                  {knownMember.form || knownMember.stream
+                    ? ` — ${[knownMember.form, knownMember.stream].filter(Boolean).join(', ')}`
+                    : ''}
+                </p>
               ) : null}
 
+              {unknownMember ? (
+                /*
+                 * Offers to create rather than creating.
+                 *
+                 * Inventing a student from a typo is how a register acquires
+                 * people who do not exist. Making it a second, explicit act means
+                 * the entry is always something a person chose to do.
+                 */
+                <div className="rounded-lg border border-accent bg-accent/40 px-4 py-3 text-sm">
+                  <p className="font-medium">No student with that number is on file.</p>
+                  <p className="mt-1 text-muted-foreground">
+                    Fill in their name below and they will be added when you record the
+                    issue.
+                  </p>
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <Field label="Student's name" htmlFor="studentName">
+                      <Input
+                        id="studentName"
+                        value={draft.studentName}
+                        onChange={(e) => set('studentName', e.target.value)}
+                        placeholder="Kept Student"
+                      />
+                    </Field>
+                    <Field label="Form" htmlFor="form" hint="Suggested from your records.">
+                      <Input
+                        id="form"
+                        value={draft.form}
+                        onChange={(e) => set('form', e.target.value)}
+                        list="form-suggestions"
+                        placeholder="Form 3"
+                      />
+                      <datalist id="form-suggestions">
+                        {(used.data?.forms ?? []).map((v) => (
+                          <option key={v} value={v} />
+                        ))}
+                      </datalist>
+                    </Field>
+                    {/*
+                      Free text, and deliberately with no `list` attribute.
 
-              {/*
-                Form and Grade suggest; Stream does not.
+                      This is the field that has been got wrong before, so it is
+                      worth stating plainly: a school names its own streams, and a
+                      suggestion list on this one is a list the school has to
+                      argue with. A datalist attached here was removed after a test
+                      caught it — the browser's autocomplete dropdown appears even
+                      when the list is empty, which turns a free-text field into a
+                      half-controlled one that looks broken and offers nothing.
 
-                A school names its own streams — Red, Blue, East, Nk, 7A — and there
-                is no list that is right for all of them. A datalist attached to that
-                field was removed after a test caught it: the browser shows its
-                dropdown even when the list is empty, so an empty one turns a
-                free-text field into a half-controlled one that looks broken and offers
-                nothing.
-
-                The lists live in the domain layer, so the school changes them without
-                anybody editing a screen.
-              */}
-              <div className="grid gap-4 sm:grid-cols-3">
-                <Field label="Form" htmlFor="form">
-                  <Input
-                    id="form"
-                    value={locked ? (knownMember?.form ?? '') : draft.form}
-                    onChange={(e) => set('form', e.target.value)}
-                    list="form-suggestions"
-                    placeholder="Form 3"
-                    readOnly={locked}
-                    aria-describedby={locked ? 'enrolment-locked' : undefined}
-                    className={locked ? 'opacity-70' : undefined}
-                  />
-                  <datalist id="form-suggestions">
-                    {FORM_SUGGESTIONS.map((v) => (
-                      <option key={v} value={v} />
-                    ))}
-                  </datalist>
-                </Field>
-
-                <Field label="Grade" htmlFor="grade">
-                  <Input
-                    id="grade"
-                    value={locked ? (knownMember?.grade ?? '') : draft.grade}
-                    onChange={(e) => set('grade', e.target.value)}
-                    list="grade-suggestions"
-                    placeholder="10"
-                    inputMode="numeric"
-                    readOnly={locked}
-                    aria-describedby={locked ? 'enrolment-locked' : undefined}
-                    className={locked ? 'opacity-70' : undefined}
-                  />
-                  <datalist id="grade-suggestions">
-                    {GRADE_SUGGESTIONS.map((v) => (
-                      <option key={v} value={v} />
-                    ))}
-                  </datalist>
-                </Field>
-
-                <Field label="Stream" htmlFor="stream" hint="Optional. Free text.">
-                  <Input
-                    id="stream"
-                    value={locked ? (knownMember?.stream ?? '') : draft.stream}
-                    onChange={(e) => set('stream', e.target.value)}
-                    placeholder="Red Stream"
-                    autoComplete="off"
-                    readOnly={locked}
-                    aria-describedby={locked ? 'enrolment-locked' : undefined}
-                    className={locked ? 'opacity-70' : undefined}
-                  />
-                </Field>
-              </div>
-
-              {/*
-                Why the boxes went read-only, stated where it is visible rather than
-                only in this file. A read-only field with no explanation looks broken;
-                one that says where the values came from is simply a fact.
-              */}
-              {locked ? (
-                <p id="enrolment-locked" className="-mt-2 text-xs text-muted-foreground">
-                  These are the student's details as recorded. Changing them is done on
-                  the student's own record, not here — issuing a book should never
-                  rewrite an enrolment.
-                </p>
+                      Form and Grade do suggest, because those are the ones with a
+                      small closed set the school actually uses.
+                    */}
+                    <Field label="Stream" htmlFor="stream" hint="Optional. Free text — the school names its own streams.">
+                      <Input
+                        id="stream"
+                        value={draft.stream}
+                        onChange={(e) => set('stream', e.target.value)}
+                        placeholder="Red Stream"
+                        autoComplete="off"
+                      />
+                    </Field>
+                    <Field label="Class" htmlFor="className" hint="Optional.">
+                      <Input
+                        id="className"
+                        value={draft.className}
+                        onChange={(e) => set('className', e.target.value)}
+                      />
+                    </Field>
+                  </div>
+                </div>
               ) : null}
             </fieldset>
 
@@ -501,3 +377,6 @@ export function RecordIssue() {
     </div>
   )
 }
+
+/** Kept beside the form rather than in a shared module: it is the form's error. */
+declare function useError(): [string | null, (e: string | null) => void]

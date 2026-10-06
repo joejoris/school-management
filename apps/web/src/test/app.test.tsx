@@ -116,21 +116,8 @@ async function mountSignedIn(path = '/', arrange?: () => Promise<unknown>) {
   return mount(path)
 }
 
-/*
- * Pick a student by typing part of their name and tapping the match.
- *
- * The entry screen identifies a student by name now. The admission number remains on
- * their record and on every loan, but the person at the desk starts from a face, so the
- * screen does.
- */
-async function pickStudent(user: ReturnType<typeof userEvent.setup>, name: string) {
-  await user.type(screen.getByLabelText(/student's name/i), name)
-  const match = await screen.findByRole('button', { name: new RegExp(name, 'i') })
-  await user.click(match)
-}
-
 /** First book's barcode, without knowing it ahead of time. */
-async function onlyBook() {
+async function firstBarcode() {
   const page = await api.searchTitles({ limit: 10, offset: 0 })
   const detail = await api.getTitle(page.items[0]!.id)
   return detail.copies[0]!.barcode
@@ -194,52 +181,30 @@ describe('the entry form, filled in', () => {
     const submit = screen.getByRole('button', { name: /record issue/i })
     expect(submit).toBeDisabled()
 
-    // Picking a student is not enough: a book number is the other half of the record.
-    await pickStudent(user, 'Kept')
+    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+    // One field is still not enough: a book number is the other half of the record.
     expect(submit).toBeDisabled()
 
-    await user.type(screen.getByLabelText(/book number/i), await onlyBook())
+    await user.type(screen.getByLabelText(/book number/i), await firstBarcode())
     await waitFor(() => expect(submit).toBeEnabled())
   })
 
-  test('a name is what finds the student, and choosing one issues the book', async () => {
-    const { user } = await mountSignedIn('/', async () => {
-      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
-      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
-    })
+  test('an admission number nobody has does not silently invent a student', async () => {
+    const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    await pickStudent(user, 'Kept')
-    await user.type(screen.getByLabelText(/book number/i), await onlyBook())
-    await user.click(screen.getByRole('button', { name: /record issue/i }))
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
 
-    await waitFor(async () => {
-      const loans = await api.listLoans({ limit: 25, offset: 0 })
-      expect(loans.items).toHaveLength(1)
-    })
-    const loans = await api.listLoans({ limit: 25, offset: 0 })
-    expect(loans.items[0]?.memberCode).toBe('S001')
-  })
-
-  test('a name that is not on file offers no match list and keeps the button shut', async () => {
-    const { user } = await mountSignedIn('/', async () => {
-      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
-    })
-    await screen.findByRole('heading', { name: /record a book issue/i })
-
-    await user.type(screen.getByLabelText(/student's name/i), 'Nobody Here')
-
-    // Nothing is promised that the screen cannot keep. It does not say the name is
-    // wrong; it simply offers nothing to pick, and the issue cannot be recorded until a
-    // real student is chosen -- no invention of a record, no lecturing.
-    await new Promise((r) => setTimeout(r, 200))
-    expect(screen.queryByRole('button', { name: /record issue/i })).toBeDisabled()
-    expect(screen.queryByText(/nobody with that name/i)).not.toBeInTheDocument()
+    // The register must never contain a person who does not exist, so the form
+    // says so and asks for a name rather than accepting one.
+    expect(await screen.findByText(/no student with that number is on file/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/student's name/i)).toBeInTheDocument()
   })
 
   test('stream is free text, and the hint says so', async () => {
-    await mountSignedIn('/')
+    const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
 
     const stream = await screen.findByLabelText(/^stream/i)
     expect(stream).toHaveAttribute('placeholder', 'Red Stream')
@@ -248,9 +213,10 @@ describe('the entry form, filled in', () => {
     expect(document.querySelector('datalist#stream-suggestions')).toBeNull()
   })
 
-  test('form and grade suggest, stream does not', async () => {
-    await mountSignedIn('/')
+  test('form suggests, and stream does not', async () => {
+    const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
     await screen.findByLabelText(/^stream/i)
 
     // Form and grade draw from what the school has actually recorded.
@@ -259,20 +225,19 @@ describe('the entry form, filled in', () => {
   })
 
   test('a failed record keeps what was typed', async () => {
-    const { user } = await mountSignedIn('/', async () => {
-      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
-    })
+    const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    await pickStudent(user, 'Kept')
-    await user.type(screen.getByLabelText(/book number/i), 'BK-no-such')
+    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+    await user.type(screen.getByLabelText(/book number/i), 'BK-0001')
     await user.click(screen.getByRole('button', { name: /record issue/i }))
 
-    // Nothing on file for that book number, so this is refused -- and the refusal must
-    // be visible rather than leaving the librarian wondering whether it saved.
-    expect(await screen.findByRole('alert')).toHaveTextContent(/no book on file/i)
+    // Nothing on file, so this is refused -- and the refusal must be visible
+    // rather than leaving the librarian wondering whether it saved.
+    expect(await screen.findByRole('alert')).toHaveTextContent(/no student on file/i)
     // A form that empties when it complains is a form people stop trusting.
-    expect(screen.getByLabelText(/book number/i)).toHaveValue('BK-no-such')
+    expect(screen.getByLabelText(/admission number/i)).toHaveValue('S001')
+    expect(screen.getByLabelText(/book number/i)).toHaveValue('BK-0001')
   })
 })
 
@@ -512,124 +477,39 @@ describe('creating an account leads to sign-in', () => {
  * always visible, and read-only once the student is recognised.
  */
 describe('enrolment: form, grade and stream', () => {
-  const optionsOf = (listId: string) =>
-    Array.from(document.querySelectorAll(`datalist#${listId} option`)).map((o) =>
-      o.getAttribute('value'),
-    )
-
-  test('all three are on the form before anything is typed', async () => {
-    await mountSignedIn('/')
-    await screen.findByRole('heading', { name: /record a book issue/i })
-
-    // Always visible, not hidden behind "no student on file". A librarian
-    // correcting a stream after a transfer needs somewhere to put it.
-    expect(screen.getByLabelText(/^form$/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/^grade$/i)).toBeInTheDocument()
-    expect(screen.getByLabelText(/^stream$/i)).toBeInTheDocument()
-  })
-
-  test('there is no Class field', async () => {
+  test('an unrecognised number reveals the enrolment boxes, including Class', async () => {
     const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    // Checked in the state where the enrolment block is actually rendered.
-    //
-    // An earlier version of this test asserted on an empty form, where the block is
-    // hidden — so a Class field sitting in the source passed, because it never made
-    // it onto the screen. The guard was checking an unrelated branch.
-    await user.type(screen.getByLabelText(/student's name/i), 'Nobody Here')
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
 
-    // The school identifies a student by admission number, form, grade and stream.
-    // A class field is a fifth way to say something the others already say, and two
-    // of them disagreeing is a register nobody can query.
-    expect(screen.queryByLabelText(/^class$/i)).not.toBeInTheDocument()
-    // ...and the fields it would have sat beside really are on screen, so a passing
-    // result means the block rendered and the field was absent.
+    // Checking means rendering the state where the block is on screen, not
+    // asserting on an empty form where the block is never rendered.
+    expect(await screen.findByLabelText(/student's name/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/^form$/i)).toBeInTheDocument()
     expect(screen.getByLabelText(/^stream$/i)).toBeInTheDocument()
+    expect(screen.getByLabelText(/^class$/i)).toBeInTheDocument()
   })
 
-  test('form suggests Form 3 and Form 4, and nothing else', async () => {
-    await mountSignedIn('/')
+  test('form suggests, and stream does not', async () => {
+    const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
-    expect(optionsOf('form-suggestions')).toEqual(['Form 3', 'Form 4'])
-    expect(screen.getByLabelText(/^form$/i)).toHaveAttribute('list', 'form-suggestions')
-  })
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
+    await screen.findByLabelText(/^stream/i)
 
-  test('grade suggests 10, 11 and 12, and nothing else', async () => {
-    await mountSignedIn('/')
-    await screen.findByRole('heading', { name: /record a book issue/i })
-    expect(optionsOf('grade-suggestions')).toEqual(['10', '11', '12'])
-    expect(screen.getByLabelText(/^grade$/i)).toHaveAttribute('list', 'grade-suggestions')
-  })
-
-  test('stream is free text with no suggestions at all', async () => {
-    await mountSignedIn('/')
-    await screen.findByRole('heading', { name: /record a book issue/i })
-
-    const stream = screen.getByLabelText(/^stream$/i)
-    // No `list`, and no datalist element either. An empty datalist still makes the
-    // browser show a dropdown, so "no suggestions" has to mean the attribute is
-    // absent — a test for `toBeNull()` on the element alone would pass on an empty
-    // list and miss the whole point.
-    expect(stream).not.toHaveAttribute('list')
+    expect(document.querySelector('datalist#form-suggestions')).not.toBeNull()
     expect(document.querySelector('datalist#stream-suggestions')).toBeNull()
   })
 
-  test('a known student has their details shown, and locked', async () => {
-    const { user } = await mountSignedIn('/', () =>
-      api.createMember({
-        memberCode: 'S001',
-        firstName: 'Kept',
-        lastName: 'Student',
-        type: 'student',
-        form: 'Form 4',
-        grade: '11',
-        stream: 'Red Stream',
-      }),
-    )
-    await screen.findByRole('heading', { name: /record a book issue/i })
-
-    await pickStudent(user, 'Kept')
-
-    const form = screen.getByLabelText(/^form$/i)
-    const grade = screen.getByLabelText(/^grade$/i)
-    const stream = screen.getByLabelText(/^stream$/i)
-
-    // Wait on the form field, not on the name.
-    //
-    // The name renders as two text nodes — \`{firstName} {lastName}\` — so there is
-    // no element whose *display value* is "Kept Student", and a test looking for one
-    // waits for something that can never appear.
-    await waitFor(() => expect(form).toHaveValue('Form 4'))
-    expect(grade).toHaveValue('11')
-    expect(stream).toHaveValue('Red Stream')
-
-    // Shown, not blank: an empty box beside a known name reads as "no information"
-    // when it actually means "look it up". Read-only, and saying why. Issuing a book must not rewrite an enrolment: a
-    // mistyped number could otherwise put four years of borrowing against the wrong
-    // child, with no confirmation and no undo.
-    expect(form).toHaveAttribute('readonly')
-    expect(grade).toHaveAttribute('readonly')
-    expect(stream).toHaveAttribute('readonly')
-    expect(screen.getByText(/issuing a book should never rewrite an enrolment/i)).toBeInTheDocument()
-  })
-
-  test('an unknown student gets empty, editable boxes', async () => {
+  test('an enrolment box is editable', async () => {
     const { user } = await mountSignedIn('/')
     await screen.findByRole('heading', { name: /record a book issue/i })
 
-    await user.type(screen.getByLabelText(/student's name/i), 'Nobody Here')
-
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
     const form = screen.getByLabelText(/^form$/i)
     expect(form).not.toHaveAttribute('readonly')
     await user.type(form, 'Form 3')
-    await user.type(screen.getByLabelText(/^grade$/i), '10')
-    await user.type(screen.getByLabelText(/^stream$/i), 'Red Stream')
-
     expect(form).toHaveValue('Form 3')
-    expect(screen.getByLabelText(/^grade$/i)).toHaveValue('10')
-    expect(screen.getByLabelText(/^stream$/i)).toHaveValue('Red Stream')
   })
 })
 
@@ -1009,7 +889,7 @@ describe('circulation at the desk', () => {
   /** Issues the one book to the one student, through the entry form. */
   async function lend(user: ReturnType<typeof userEvent.setup>) {
     await screen.findByRole('heading', { name: /record a book issue/i })
-    await pickStudent(user, 'Kept')
+    await user.type(screen.getByLabelText(/admission number/i), 'S001')
     await user.type(screen.getByLabelText(/book number/i), await firstBarcode())
     await user.click(screen.getByRole('button', { name: /record issue/i }))
     await screen.findByText(/^recorded\./i)
