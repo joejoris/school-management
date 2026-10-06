@@ -1,0 +1,10 @@
+[build]
+  command = "npm run build"
+  publish = "apps/web/dist"
+
+# The app routes in the browser. Without this, a hard refresh on any route
+# other than `/` is answered by Netlify with "Page Not Found".
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200
