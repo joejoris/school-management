@@ -272,13 +272,16 @@ describe('the register', () => {
     expect(await screen.findByText(/no books are out/i)).toBeInTheDocument()
   })
 
-  test('a select is not used for the filter', async () => {
+  test('the four buckets are shown straight away, no filter menu', async () => {
     await mountSignedIn('/register')
     await screen.findByRole('heading', { name: /issue register/i })
-    // Five options in a row fit any screen. A select on a phone is a full-screen
-    // overlay that hides the register being filtered.
+    // A select on a phone is a full-screen overlay that hides the register; the
+    // four-page grouping replaces the one-filter view entirely.
     expect(screen.queryByRole('combobox', { name: /show|filter/i })).not.toBeInTheDocument()
-    expect(screen.getByRole('radio', { name: /on loan/i })).toBeChecked()
+    expect(screen.getByRole('heading', { name: /^overdue/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^on loan/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^returned/i })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { name: /^void/i })).toBeInTheDocument()
   })
 })
 
@@ -950,16 +953,10 @@ describe('circulation at the desk', () => {
     await user.click(screen.getByRole('button', { name: /record the return/i }))
 
     /*
-     * The book leaves the "on loan" view, so the table goes with it.
-     *
-     * The register opens on what is out now — somebody who has just returned a book
-     * is history, and history has its own filter. So there is nothing left to show
-     * and the empty state is the correct outcome, not a failure to find the row.
+     * The loan leaves the "On loan" bucket, but it is not gone from the register:
+     * it moves to the "Returned" bucket, with its return date attached. A register
+     * that swallowed returns would hide every book the school ever got back.
      */
-    expect(await screen.findByText(/no books are out/i)).toBeInTheDocument()
-
-    // And the loan is still there, under "returned", with its return date.
-    await user.click(screen.getByRole('radio', { name: /^returned$/i }))
     expect(await desk().findByText('Kept Student')).toBeInTheDocument()
 
     const loans = await api.listLoans({ limit: 10, offset: 0, status: 'returned' })
@@ -982,7 +979,8 @@ describe('circulation at the desk', () => {
     await screen.findByRole('heading', { name: /issue register/i })
     await user.click(desk().getByRole('button', { name: /^return$/i }))
     await user.click(screen.getByRole('button', { name: /record the return/i }))
-    await screen.findByText(/no books are out/i)
+    // It is returned now: in the Returned bucket, and out of the On loan one.
+    expect(await desk().findByText('Kept Student')).toBeInTheDocument()
 
     await user.click(screen.getByRole('link', { name: /catalogue/i }))
     expect(await screen.findByText(/1 of 1 available/i)).toBeInTheDocument()
@@ -1009,7 +1007,9 @@ describe('circulation at the desk', () => {
      * look for it. The point of keeping a void is the reason attached to it; a
      * reason nobody can find is the same as no reason.
      */
-    await user.click(screen.getByRole('radio', { name: /^void$/i }))
+    // The void reason is exactly what is on the Void bucket. A void in a register
+    // with no explanation is the auditor's question; a reason nobody can find is
+    // the same as no reason.
     expect(await desk().findByText(/wrong admission number/i)).toBeInTheDocument()
     expect(await desk().findByText(/voided/i)).toBeInTheDocument()
 
@@ -1032,14 +1032,13 @@ describe('circulation at the desk', () => {
     await user.click(desk().getByRole('button', { name: /^return$/i }))
     await user.click(screen.getByRole('button', { name: /record the return/i }))
 
-    // Gone from the open view, because it is no longer out.
-    expect(await screen.findByText(/no books are out/i)).toBeInTheDocument()
-
-    // And absent from history too, which is the part worth checking: a closed loan
-    // is a record, not something still offering four buttons the domain refuses.
-    await user.click(screen.getByRole('radio', { name: /^returned$/i }))
-    await desk().findByText('Kept Student')
+    // Gone from the on-loan bucket, because it is no longer out.
     expect(desk().queryByRole('button', { name: /^return$/i })).not.toBeInTheDocument()
+
+    // And absent the four actions too — a closed loan is a record, not something
+    // still offering four buttons the domain refuses. It lives in the Returned
+    // bucket, where a closed loan belongs.
+    expect(await desk().findByText('Kept Student')).toBeInTheDocument()
     expect(desk().queryByRole('button', { name: /^void$/i })).not.toBeInTheDocument()
     expect(desk().queryByRole('button', { name: /^renew$/i })).not.toBeInTheDocument()
   })

@@ -788,7 +788,12 @@ export class SupabaseApi implements LibraryApi {
    */
   async listLoans(query: LoanQuery): Promise<Page<LoanRow>> {
     const loans = await this.page<LoanRow & Record<string, unknown>>('loans', { ...query, limit: 200, offset: 0 }, {
-      status: query.status === 'on_loan' ? 'eq.active' : query.status ? `eq.${query.status}` : undefined,
+      status:
+        query.status === 'on_loan'
+          ? 'eq.active'
+          : query.status === 'all' || query.status === undefined
+            ? undefined
+            : `eq.${query.status}`,
     })
     return { ...loans, limit: query.limit, offset: query.offset }
   }
