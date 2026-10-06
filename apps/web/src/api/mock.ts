@@ -627,7 +627,12 @@ export class MockApi implements LibraryApi {
   async listLoans(query: LoanQuery): Promise<Page<LoanRow>> {
     this.need('loans.read')
     const q = query.q?.toLowerCase().trim()
-    let rows = this.db.loans.map((l) => this.rowFor(l))
+    // Filtered before the rows are built, because a LoanRow carries the join —
+    // memberCode and the rest — and not the memberId this asks for.
+    const source = query.memberId
+      ? this.db.loans.filter((l) => l.memberId === query.memberId)
+      : this.db.loans
+    let rows = source.map((l) => this.rowFor(l))
 
     const status = query.status ?? 'on_loan'
     if (status === 'on_loan') rows = rows.filter((r) => r.status === 'active')

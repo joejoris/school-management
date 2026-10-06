@@ -375,3 +375,111 @@ describe('backup against the live system', () => {
     }
   })
 })
+
+/*
+ * One student's borrowing history.
+ *
+ * The `loans` table holds ids — who and which copy — and none of the columns a
+ * person reads off a line: no name, no title, no book number. Until the join
+ * existed, `listLoans` cast the raw table to the register row, so on the live
+ * system every row rendered `undefined` for all four. The history screen is
+ * where that shows up first, and the register right behind it.
+ */
+describe('one student’s borrowing history', () => {
+  test('filters to the member, honours the page, and joins what the table has not got', async () => {
+    const s = stub([
+      // 1. the loans page: ids and dates only.
+      {
+        json: [
+          {
+            id: 'l_1',
+            member_id: 'm_1',
+            copy_id: 'c_1',
+            status: 'returned',
+            checked_out_at: '2026-09-01T09:00:00.000Z',
+            due_at: '2026-09-15T09:00:00.000Z',
+            returned_at: '2026-09-10T09:00:00.000Z',
+            void_reason: null,
+          },
+        ],
+        headers: { 'Content-Range': '0-0/3' },
+      },
+      // 2. and 3. the members and copies behind that page's ids.
+      {
+        json: [
+          {
+            id: 'm_1',
+            member_code: 'S001',
+            first_name: 'Kept',
+            last_name: 'Student',
+            form: 'Form 4',
+            stream: null,
+            grade: null,
+            class_name: null,
+          },
+        ],
+      },
+      { json: [{ id: 'c_1', barcode: 'BK-1', status: 'on_shelf', title_id: 't_1' }] },
+      // 4. and the titles behind those copies.
+      { json: [{ id: 't_1', title: 'Things We Carry', author: 'Tim O’Brien' }] },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const result = await api.listLoans({ memberId: 'm_1', status: 'all', limit: 25, offset: 0 })
+      const asked = decodeURIComponent(s.calls[0]!.url)
+
+      // The member filter reaches the table. Without it "their history" would be
+      // everybody's loans with the others filtered off after the page was cut.
+      expect(asked).toContain('member_id=eq.m_1')
+      // The page is honoured rather than a hardcoded first 200 rows.
+      expect(asked).toContain('limit=25')
+      expect(asked).toContain('offset=0')
+      // Newest first, tiebroken on the id so two loans taken in the same minute
+      // cannot land on both sides of a page boundary.
+      expect(asked).toContain('order=checked_out_at.desc,id.desc')
+
+      // The total comes from Content-Range, so "3 in all" survives the join.
+      expect(result.total).toBe(3)
+      expect(result.hasMore).toBe(true)
+      // And the row carries what the paper register carries.
+      expect(result.items[0]).toMatchObject({
+        memberCode: 'S001',
+        studentName: 'Kept Student',
+        title: 'Things We Carry',
+        author: 'Tim O’Brien',
+        barcode: 'BK-1',
+        copyStatus: 'on_shelf',
+        status: 'returned',
+        daysOverdue: 0,
+      })
+
+      // The join's two rounds: members and copies together, then titles.
+      expect(decodeURIComponent(s.calls[1]!.url)).toContain('members?')
+      expect(decodeURIComponent(s.calls[1]!.url)).toContain('id=in.(m_1)')
+      expect(decodeURIComponent(s.calls[2]!.url)).toContain('copies?')
+      expect(decodeURIComponent(s.calls[3]!.url)).toContain('titles?')
+      expect(decodeURIComponent(s.calls[3]!.url)).toContain('id=in.(t_1)')
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('no loans is one read, not four', async () => {
+    const s = stub([{ json: [], headers: { 'Content-Range': '0-0/0' } }])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const result = await api.listLoans({ memberId: 'm_new', status: 'all', limit: 25, offset: 0 })
+      expect(result.items).toEqual([])
+      expect(result.total).toBe(0)
+      // Fetching members for an empty id list would ask the database for
+      // `in.()` — a malformed filter, and an error for a student with no loans.
+      expect(s.calls).toHaveLength(1)
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})

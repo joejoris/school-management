@@ -226,6 +226,8 @@ function StudentRow({
                 </ul>
               )}
 
+              <LoanHistory memberId={student.id} />
+
               <FineLedger
                 memberId={student.id}
                 balance={detail.data.outstandingFine}
@@ -244,6 +246,86 @@ function StudentRow({
         </div>
       ) : null}
     </Card>
+  )
+}
+
+/**
+ * What they have borrowed before.
+ *
+ * "Books out" answers the question happening at the desk right now. This is the
+ * other one — has this student brought books back before, and how did each one
+ * end up — which is what a parent asks, and what decides whether refusing to
+ * lend today is a surprise or a pattern.
+ *
+ * Books still out are deliberately *not* listed here: they are above, with the
+ * dates that matter while they are out. This is the past tense.
+ *
+ * Capped at the 25 most recent, because a student who borrows every week for
+ * four years has a hundred rows and nobody standing at a desk reads past the
+ * first screenful. The count still says how many there are in all.
+ */
+function LoanHistory({ memberId }: { memberId: string }) {
+  const history = useQuery({
+    queryKey: ['loans', 'history', memberId],
+    queryFn: () => api.listLoans({ memberId, status: 'all', limit: 25, offset: 0 }),
+    staleTime: 5_000,
+  })
+
+  const past = (history.data?.items ?? []).filter((r) => r.status !== 'active')
+  const total = history.data?.total ?? 0
+
+  return (
+    <div className="mt-5 border-t border-border pt-4">
+      <h3 className="text-sm font-medium">Borrowing history</h3>
+
+      {history.isError ? (
+        <p role="alert" className="mt-1 text-sm text-destructive">
+          Could not load their borrowing history.
+        </p>
+      ) : history.isPending ? (
+        <p className="mt-1 text-sm text-muted-foreground">Loading…</p>
+      ) : past.length === 0 ? (
+        <p className="mt-1 text-sm text-muted-foreground">No past borrowing yet.</p>
+      ) : (
+        <>
+          <ul className="mt-2 grid gap-1.5">
+            {past.map((r) => (
+              <li
+                key={r.loanId}
+                className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1 rounded-md bg-card px-3 py-2 text-sm"
+              >
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate">{r.title}</span>
+                  <span className="text-xs text-muted-foreground">taken {date(r.checkedOutAt)}</span>
+                </span>
+                {/*
+                  * How it ended. "Voided" carries its reason, as on the register:
+                  * a loan in somebody's history with no explanation is the one
+                  * they will ask about years later.
+                */}
+                {r.status === 'returned' ? (
+                  <span className="numeric text-xs text-muted-foreground">
+                    back {date(r.returnedAt)}
+                  </span>
+                ) : (
+                  <span className="text-xs text-muted-foreground capitalize">
+                    {r.status}
+                    {r.voidReason ? ` — ${r.voidReason}` : ''}
+                  </span>
+                )}
+              </li>
+            ))}
+          </ul>
+
+          {total > history.data!.items.length ? (
+            <p className="mt-2 text-xs text-muted-foreground">
+              The {history.data!.items.length} most recent of {total} — the older ones are in the
+              register.
+            </p>
+          ) : null}
+        </>
+      )}
+    </div>
   )
 }
 

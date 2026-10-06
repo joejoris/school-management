@@ -1782,3 +1782,76 @@ describe('backup', () => {
     expect(await screen.findByText(/1 students, 1 books, 0 loans/i)).toBeInTheDocument()
   })
 })
+
+/*
+ * A student's borrowing history.
+ *
+ * Until now the record showed only what is out right now, so the answer to "has
+ * she brought books back before?" — the question behind every refusal to lend,
+ * and the one a parent asks — had no screen. The register had the rows, but only
+ * by searching it for the admission number by hand.
+ *
+ * The history is the past tense: books still out are above it, with the dates
+ * that matter while they are out.
+ */
+describe('a student’s borrowing history', () => {
+  test('shows how each past loan ended, and leaves the books still out to “Books out”', async () => {
+    const { user } = await mountSignedIn('/students', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+        form: 'Form 4',
+      })
+      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 3 })
+      const detail = await api.getTitle(t.id)
+      const barcodes = detail.copies.map((c) => c.barcode)
+
+      // One brought back…
+      const out = await api.checkout({ memberCode: 'S001', barcode: barcodes[0]! })
+      if (!out.ok) throw new Error(out.message)
+      const back = await api.returnLoan({ loanId: out.loan.id, conditionIn: 'good' })
+      if (!back.ok) throw new Error(back.message)
+
+      // …one voided, with its reason…
+      const second = await api.checkout({ memberCode: 'S001', barcode: barcodes[1]! })
+      if (!second.ok) throw new Error(second.message)
+      const voided = await api.voidLoan(second.loan.id, 'issued to the wrong student')
+      if (!voided.ok) throw new Error(voided.message)
+
+      // …and one still out, which is the Books out section's row and not history's.
+      const third = await api.checkout({ memberCode: 'S001', barcode: barcodes[2]! })
+      if (!third.ok) throw new Error(third.message)
+    })
+
+    await user.click(await screen.findByRole('button', { name: /s001/i }))
+    const heading = await screen.findByRole('heading', { name: /borrowing history/i })
+    const section = heading.parentElement!
+
+    // Two past loans out of three — the one still out is above, with its due
+    // date. `waitFor` because the heading paints before its own query lands.
+    await waitFor(() => expect(within(section).getAllByRole('listitem')).toHaveLength(2))
+    expect(within(section).getAllByText('Things We Carry')).toHaveLength(2)
+    expect(within(section).getByText(/^back /)).toBeInTheDocument()
+    // A void with no explanation is the row somebody asks about years later.
+    expect(within(section).getByText(/issued to the wrong student/i)).toBeInTheDocument()
+    expect(within(section).queryByText(/^due /i)).not.toBeInTheDocument()
+  })
+
+  test('a student who has borrowed nothing is told so plainly', async () => {
+    const { user } = await mountSignedIn('/students', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+      })
+    })
+
+    await user.click(await screen.findByRole('button', { name: /s001/i }))
+    expect(await screen.findByRole('heading', { name: /borrowing history/i })).toBeInTheDocument()
+    expect(await screen.findByText(/no past borrowing yet/i)).toBeInTheDocument()
+    expect(screen.getByText(/nothing out/i)).toBeInTheDocument()
+  })
+})

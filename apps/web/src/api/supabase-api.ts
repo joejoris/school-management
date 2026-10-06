@@ -782,20 +782,88 @@ export class SupabaseApi implements LibraryApi {
   /**
    * The register.
    *
-   * Built from three reads rather than one join view, because a view is readable by
-   * anyone who can read its tables — which makes "the register" a convenience rather
-   * than a rule. The rules are in the functions; this is just the columns.
+   * `loans` stores *who* and *which copy* and nothing about them — no name, no
+   * title, no book number — so a register line is assembled here from three
+   * reads keyed by the ids on this page: members and copies together, then the
+   * titles behind those copies. Only this page's ids are fetched; joining the
+   * whole history to render twenty-five rows would be a query that grows with
+   * the term.
+   *
+   * The join is in the client rather than a view or an RPC, because a view is
+   * readable by anyone who can read its tables — which makes "the register" a
+   * convenience rather than a rule. The rules are in the functions; this is
+   * just the columns.
    */
   async listLoans(query: LoanQuery): Promise<Page<LoanRow>> {
-    const loans = await this.page<LoanRow & Record<string, unknown>>('loans', { ...query, limit: 200, offset: 0 }, {
-      status:
-        query.status === 'on_loan'
-          ? 'eq.active'
-          : query.status === 'all' || query.status === undefined
-            ? undefined
-            : `eq.${query.status}`,
+    const status = query.status ?? 'on_loan'
+    const params: Record<string, string | undefined> = {
+      member_id: query.memberId ? `eq.${query.memberId}` : undefined,
+    }
+    if (status === 'all') {
+      params.status = undefined
+    } else if (status === 'overdue') {
+      // Not a stored status: "active, and past due" — a comparison the database
+      // can answer. The full day matches the mock's `daysOverdue`, which counts
+      // whole days late rather than minutes.
+      params.status = 'eq.active'
+      params.due_at = `lt.${new Date(Date.now() - 86_400_000).toISOString()}`
+    } else {
+      params.status = `eq.${status === 'on_loan' ? 'active' : status}`
+    }
+
+    const page = await this.page<Loan>('loans', {
+      ...query,
+      // Newest first, with the id as a tiebreaker: several loans share a
+      // timestamp when a class set goes out at once, and a page boundary that
+      // sorts only on the timestamp can repeat or skip a row.
+      sort: query.sort ?? 'checked_out_at.desc,id.desc',
+    }, params)
+    return { ...page, items: await this.loanRows(page.items) }
+  }
+
+  /** The columns a register line needs, from the ids a loan holds. */
+  private async loanRows(loans: Loan[]): Promise<LoanRow[]> {
+    if (loans.length === 0) return []
+    const join = (ids: string[]) => `in.(${[...new Set(ids)].join(',')})`
+    const [members, copies] = await Promise.all([
+      this.list<Member>('members', { id: join(loans.map((l) => l.memberId)) }),
+      this.list<Copy>('copies', { id: join(loans.map((l) => l.copyId)) }),
+    ])
+    const titleIds = copies.map((c) => c.titleId)
+    const titles = titleIds.length > 0 ? await this.list<Title>('titles', { id: join(titleIds) }) : []
+    const byMember = new Map(members.map((m) => [m.id, m]))
+    const byCopy = new Map(copies.map((c) => [c.id, c]))
+    const byTitle = new Map(titles.map((t) => [t.id, t]))
+    const now = Date.now()
+
+    return loans.map((l) => {
+      const member = byMember.get(l.memberId)
+      const copy = byCopy.get(l.copyId)
+      const title = copy ? byTitle.get(copy.titleId) : undefined
+      // Whole days, never negative, and only while the book is out: a book
+      // returned early is not "minus three days overdue".
+      const daysOverdue =
+        l.status === 'active' ? Math.max(0, Math.floor((now - Date.parse(l.dueAt)) / 86_400_000)) : 0
+      return {
+        loanId: l.id,
+        memberCode: member?.memberCode ?? '—',
+        studentName: member ? `${member.firstName} ${member.lastName}` : '—',
+        grade: member?.grade ?? null,
+        form: member?.form ?? null,
+        stream: member?.stream ?? null,
+        className: member?.className ?? null,
+        title: title?.title ?? '—',
+        author: title?.author ?? '—',
+        barcode: copy?.barcode ?? '—',
+        copyStatus: copy?.status ?? 'on_shelf',
+        checkedOutAt: l.checkedOutAt,
+        dueAt: l.dueAt,
+        returnedAt: l.returnedAt,
+        status: l.status,
+        daysOverdue,
+        voidReason: l.voidReason,
+      }
     })
-    return { ...loans, limit: query.limit, offset: query.offset }
   }
 
   async listActiveLoans(memberId: string): Promise<Loan[]> {

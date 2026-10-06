@@ -77,6 +77,15 @@ export interface LoanQuery extends PageQuery {
   status?: 'all' | 'on_loan' | 'returned' | 'overdue' | 'void'
   grade?: string
   className?: string
+  /**
+   * One student's loans only — their borrowing history.
+   *
+   * A filter on the member rather than a second "history" method, because it is
+   * the same rows with the same columns; only the question differs. One method
+   * means the register and a student's record cannot drift into two different
+   * shapes of the same loan.
+   */
+  memberId?: string
 }
 
 export interface AuditQuery extends PageQuery {
