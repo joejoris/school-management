@@ -240,6 +240,28 @@ describe('the entry form, filled in', () => {
     expect(screen.getByLabelText(/admission number/i)).toHaveValue('S001')
     expect(screen.getByLabelText(/book number/i)).toHaveValue('BK-0001')
   })
+  test('an unknown admission number with a name records the loan automatically', async () => {
+    const { user } = await mountSignedIn('/', async () => {
+      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+    })
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
+    await user.type(screen.getByLabelText(/student's name/i), 'Kept Student')
+    await user.type(screen.getByLabelText(/book number/i), await firstBarcode())
+    await user.click(screen.getByRole('button', { name: /record issue/i }))
+
+    // The unknown number is enrolled by the form and the book goes out. No
+    // "no student on file" dead end.
+    await waitFor(async () => {
+      const loans = await api.listLoans({ limit: 10, offset: 0 })
+      expect(loans.items).toHaveLength(1)
+    })
+    const loans = await api.listLoans({ limit: 10, offset: 0 })
+    expect(loans.items[0]?.memberCode).toBe('S999')
+    const members = await api.searchMembers({ limit: 5, offset: 0, q: 'S999' })
+    expect(members.items[0]?.memberCode).toBe('S999')
+  })
 })
 
 describe('the register', () => {

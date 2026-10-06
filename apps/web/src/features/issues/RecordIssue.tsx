@@ -84,15 +84,41 @@ export function RecordIssue() {
 
   const save = useMutation({
     mutationFn: async () => {
+      /*
+       * If the admission number is on a fresh student, enrol that student first,
+       * then issue the book. The entry form is the place where a brand-new
+       * student gets on file for their first book; expecting the admission number
+       * to already be on file would mean logging them somewhere else first.
+       *
+       * Only the librarians who can enrol are allowed to reach this code at all —
+       * assistance and above have it, because the library is the whole app for a
+       * school. The permissions are still enforced again in the domain, so a UI
+       * path that tries to enrol without the right permission is refused.
+       */
+      const code = draft.memberCode.trim()
+      if (!member.data && draft.studentName.trim().length === 0) {
+        throw new Error(
+          'No student on file with that number. Fill in their name and they will be added when you record the issue.',
+        )
+      }
+      if (!member.data) {
+        const typedName = draft.studentName.trim()
+        const gap = typedName.lastIndexOf(' ')
+        await api.createMember({
+          memberCode: code,
+          firstName: gap === -1 ? typedName : typedName.slice(0, gap),
+          lastName: gap === -1 ? '—' : typedName.slice(gap + 1),
+          type: 'student',
+          form: draft.form || undefined,
+          stream: draft.stream || undefined,
+          grade: draft.grade || undefined,
+        })
+      }
       const result = await api.checkout({
-        memberCode: draft.memberCode.trim(),
+        memberCode: code,
         barcode: draft.barcode.trim(),
         dueAt: draft.dueDate || undefined,
         checkedOutAt: draft.dateTaken ? startOfLocalDay(draft.dateTaken) : undefined,
-        studentName: draft.studentName.trim() || undefined,
-        form: draft.form || undefined,
-        stream: draft.stream || undefined,
-        grade: draft.grade || undefined,
       })
       if (!result.ok) throw new Error(result.message)
       return result
@@ -100,7 +126,7 @@ export function RecordIssue() {
     onSuccess: async (result) => {
       const who = member.data
       setSaved(
-        `Recorded. ${who ? `${who.firstName} ${who.lastName}` : draft.memberCode}` +
+        `Recorded. ${who ? `${who.firstName} ${who.lastName}` : draft.studentName.trim() || draft.memberCode}` +
           ` has ${draft.title.trim() || 'the book'} until ` +
           `${new Date(result.dueAt).toLocaleDateString('en-GB', { dateStyle: 'medium' })}.`,
       )
