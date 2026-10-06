@@ -641,9 +641,20 @@ export class MockApi implements LibraryApi {
     else if (status === 'overdue') rows = rows.filter((r) => r.daysOverdue > 0 && r.status === 'active')
 
     if (q) {
+      /*
+       * Every word must appear somewhere, not the whole phrase in one column.
+       *
+       * "S001 Kept" means the admission number and the name — a librarian typing
+       * both expects both matched, and no single column holds the phrase. This is
+       * the same answer the live backend gives, so a search cannot find a row on
+       * one system and not the other.
+       */
+      const tokens = q.split(/\s+/)
       rows = rows.filter((r) =>
-        [r.memberCode, r.studentName, r.title, r.barcode].some((v) =>
-          v?.toLowerCase().includes(q),
+        tokens.every((t) =>
+          [r.memberCode, r.studentName, r.title, r.barcode].some((v) =>
+            v?.toLowerCase().includes(t),
+          ),
         ),
       )
     }

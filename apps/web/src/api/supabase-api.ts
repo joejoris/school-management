@@ -811,6 +811,22 @@ export class SupabaseApi implements LibraryApi {
       params.status = `eq.${status === 'on_loan' ? 'active' : status}`
     }
 
+    /*
+     * Free text does not live on `loans` — it belongs to the member, the copy
+     * and the title, and a page cannot be counted across tables it cannot see.
+     * So each typed word is resolved to the members, copies and titles it
+     * matches, and the loans are asked for by id: every word must land on the
+     * same line, which is how the mock answers against the joined row. The
+     * total stays the database's count of rows that really match.
+     */
+    if (query.q?.trim()) {
+      const free = await this.freeTextLoanFilter(query.q)
+      if (!free) {
+        return { items: [], total: 0, limit: query.limit, offset: query.offset, hasMore: false }
+      }
+      params.and = free
+    }
+
     const page = await this.page<Loan>('loans', {
       ...query,
       // Newest first, with the id as a tiebreaker: several loans share a
@@ -819,6 +835,63 @@ export class SupabaseApi implements LibraryApi {
       sort: query.sort ?? 'checked_out_at.desc,id.desc',
     }, params)
     return { ...page, items: await this.loanRows(page.items) }
+  }
+
+  /**
+   * The `and=(or=(...),or=(...))` filter for a free-text register search.
+   *
+   * One group per typed word, and the group says which loans that word can
+   * reach: those of matching members, or those holding a matching copy or
+   * title. The groups are ANDed, so every word must land somewhere on the same
+   * line — "S001 Kept" finds a student by number and name, and "Kept carry"
+   * finds their copy of a title, which is what a librarian typing both means.
+   * The mock answers the same way against the joined row.
+   *
+   * Returns null when any single word matches nothing at all: no loan can put
+   * every word on its line, and the loans page would be a pointless read.
+   * The words are resolved in one batch rather than one after another, because
+   * a search box should not cost a round trip per letter.
+   */
+  private async freeTextLoanFilter(q: string): Promise<string | null> {
+    const groups = await Promise.all(
+      q
+        .trim()
+        .split(/\s+/)
+        .map(async (token) => {
+          const memberCols = this.textFilter(token, ['member_code', 'first_name', 'last_name'])
+          const copyCols = this.textFilter(token, ['barcode'])
+          const titleCols = this.textFilter(token, ['title'])
+          const [members, barcodes, titles] = await Promise.all([
+            memberCols
+              ? this.list<{ id: string }>('members', { select: 'id', and: memberCols })
+              : Promise.resolve([] as { id: string }[]),
+            copyCols
+              ? this.list<{ id: string }>('copies', { select: 'id', and: copyCols })
+              : Promise.resolve([] as { id: string }[]),
+            titleCols
+              ? this.list<{ id: string }>('titles', { select: 'id', and: titleCols })
+              : Promise.resolve([] as { id: string }[]),
+          ])
+          const byTitle =
+            titles.length > 0
+              ? await this.list<{ id: string }>('copies', {
+                  select: 'id',
+                  title_id: `in.(${titles.map((t) => t.id).join(',')})`,
+                })
+              : []
+
+          const memberIds = members.map((m) => m.id)
+          const copyIds = [...new Set([...barcodes, ...byTitle].map((c) => c.id))]
+          if (memberIds.length === 0 && copyIds.length === 0) return null
+          const sides = [
+            memberIds.length > 0 ? `member_id=in.(${memberIds.join(',')})` : null,
+            copyIds.length > 0 ? `copy_id=in.(${copyIds.join(',')})` : null,
+          ].filter(Boolean)
+          return `or=(${sides.join(',')})`
+        }),
+    )
+    if (groups.some((g) => g === null)) return null
+    return `(${groups.join(',')})`
   }
 
   /** The columns a register line needs, from the ids a loan holds. */

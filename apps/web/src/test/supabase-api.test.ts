@@ -483,3 +483,100 @@ describe('one student’s borrowing history', () => {
     }
   })
 })
+
+/*
+ * The register's free-text search, on the live database.
+ *
+ * `loans` holds no name, no title, no book number, so "Kept carry" cannot be a
+ * filter on the table — and it used to be no filter at all: the query's `q` was
+ * dropped, the search silently returned every row, and every total on screen
+ * was a count of nothing that was typed. Each word is now resolved to the
+ * members, copies and titles it reaches, and the loans are asked for by id —
+ * with the page and the count still the database's.
+ */
+describe('the register’s search on the live database', () => {
+  test('resolves each word to ids, then pages the loans that carry them all', async () => {
+    const s = stub([
+      // "kept": members, copies, titles — only the name matches.
+      { json: [{ id: 'm_1' }] },
+      { json: [] },
+      { json: [] },
+      // "carry": members, copies, titles — only the title matches…
+      { json: [] },
+      { json: [] },
+      { json: [{ id: 't_1' }] },
+      // …so its copies are read off that title.
+      { json: [{ id: 'c_1' }] },
+      // The page of loans itself.
+      {
+        json: [
+          {
+            id: 'l_1',
+            member_id: 'm_1',
+            copy_id: 'c_1',
+            status: 'active',
+            checked_out_at: '2026-10-01T09:00:00.000Z',
+            due_at: '2026-10-15T09:00:00.000Z',
+            returned_at: null,
+            void_reason: null,
+          },
+        ],
+        headers: { 'Content-Range': '0-0/7' },
+      },
+      // And the join's members, copies and titles for that page.
+      { json: [{ id: 'm_1', member_code: 'S001', first_name: 'Kept', last_name: 'Student', form: 'Form 4', stream: null, grade: null, class_name: null }] },
+      { json: [{ id: 'c_1', barcode: 'BK-1', status: 'on_shelf', title_id: 't_1' }] },
+      { json: [{ id: 't_1', title: 'Things We Carry', author: 'Tim O’Brien' }] },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const result = await api.listLoans({ status: 'all', q: 'Kept carry', limit: 25, offset: 0 })
+
+      // Both words reached the tables they live on: the name asked of members,
+      // the title asked of titles — not only whichever column matched first.
+      // The case travels as typed; `ilike` is what makes it not matter.
+      expect(decodeURIComponent(s.calls[0]!.url)).toContain('first_name.ilike.*Kept*')
+      expect(decodeURIComponent(s.calls[5]!.url)).toContain('title.ilike.*carry*')
+
+      // The loans read carries one group per word, ANDed: a row must put every
+      // word on the same line — this student, their copy of that title.
+      const loansUrl = decodeURIComponent(s.calls[7]!.url)
+      expect(loansUrl).toContain('and=(or=(member_id=in.(m_1)),or=(copy_id=in.(c_1)))')
+      expect(loansUrl).toContain('limit=25')
+      expect(loansUrl).toContain('offset=0')
+
+      // The count is the database's: seven rows carry both words, one of them
+      // is on this page — which is the number the pager shows.
+      expect(result.total).toBe(7)
+      expect(result.hasMore).toBe(true)
+      expect(result.items[0]).toMatchObject({ memberCode: 'S001', title: 'Things We Carry' })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('a word nothing matches ends the search without reading the loans', async () => {
+    const s = stub([{ json: [] }])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const result = await api.listLoans({
+        status: 'all',
+        q: 'nothing like this',
+        limit: 25,
+        offset: 0,
+      })
+      // An empty page, not an error, and not every loan in the school.
+      expect(result).toEqual({ items: [], total: 0, limit: 25, offset: 0, hasMore: false })
+      // The loans table is never asked: one unmatched word settles the whole
+      // question, and reading the rows to filter them here would put the total
+      // back where it was — a count of everything, showing nothing.
+      expect(s.calls.some((c) => c.url.includes('/loans?'))).toBe(false)
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})

@@ -1692,6 +1692,97 @@ describe('the register as a file', () => {
 })
 
 /*
+ * The register, page by page.
+ *
+ * It used to fetch its first 200 rows and say "Showing the first 200. Narrow
+ * the search to see the rest" — advice where a total belonged. A librarian
+ * could not tell the end of the register from the end of the fetch, which is
+ * the difference between "I have seen everything" and "I have seen a page of
+ * everything". The pager replaces the advice with the number and the next 25.
+ */
+describe('the register, page by page', () => {
+  /**
+   * One page plus one row over.
+   *
+   * A student may have five books out at once, so it takes six of them to hold
+   * 26 loans — and six names, one of them distinct, so a search can find a
+   * single student with a single letter.
+   */
+  const manyBooks = async () => {
+    const codes = ['S001', 'S002', 'S003', 'S004', 'S005', 'S006']
+    for (const memberCode of codes) {
+      await api.createMember({
+        memberCode,
+        firstName: 'Kept',
+        lastName: memberCode === 'S006' ? 'Zebra' : 'Student',
+        type: 'student',
+        form: 'Form 4',
+      })
+    }
+    const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 30 })
+    const barcodes = (await api.getTitle(t.id)).copies.map((c) => c.barcode)
+    let next = 0
+    for (const memberCode of codes) {
+      for (let k = 0; k < (memberCode === 'S006' ? 1 : 5); k++) {
+        const out = await api.checkout({ memberCode, barcode: barcodes[next++]! })
+        if (!out.ok) throw new Error(out.message)
+      }
+    }
+  }
+
+  test(
+    'serves 25 rows at a time and says how many there are in all',
+    async () => {
+      const { user } = await mountSignedIn('/register', manyBooks)
+
+      await screen.findByRole('heading', { name: /issue register/i })
+      expect(await screen.findByText(/showing 1–25 of 26/i)).toBeInTheDocument()
+      expect(within(screen.getByRole('region', { name: 'On loan' })).getAllByRole('listitem')).toHaveLength(25)
+      // The first page knows where it is: there is nowhere newer to go.
+      expect(screen.getByText('← Newer')).toBeDisabled()
+      expect(screen.getByText('Older →')).toBeEnabled()
+
+      // The 26th row was not cut off in silence — it is on the next page.
+      await user.click(screen.getByText('Older →'))
+      expect(await screen.findByText(/showing 26–26 of 26/i)).toBeInTheDocument()
+      expect(within(screen.getByRole('region', { name: 'On loan' })).getAllByRole('listitem')).toHaveLength(1)
+      // At the end of the register, the way back is offered and the way on is spent.
+      expect(screen.getByText('Older →')).toBeDisabled()
+      expect(screen.getByText('← Newer')).toBeEnabled()
+
+      await user.click(screen.getByText('← Newer'))
+      expect(await screen.findByText(/showing 1–25 of 26/i)).toBeInTheDocument()
+    },
+    /*
+     * Given a budget rather than the suite's five seconds.
+     *
+     * Nothing here is waiting on anything slow — the mock answers in
+     * milliseconds — but jsdom paints the register twice over (the stacked
+     * cards and the table) before the heading can appear, which is close to
+     * two seconds on its own, and the two page changes each repaint it. Measured
+     * at 3.4–5.1s depending on how warm the file is; ten leaves room for the
+     * range without a test that fails by being slow rather than wrong.
+     */
+    10_000,
+  )
+
+  test('a new search starts at the first page', async () => {
+    const { user } = await mountSignedIn('/register', manyBooks)
+    await screen.findByRole('heading', { name: /issue register/i })
+    expect(await screen.findByText(/showing 1–25 of 26/i)).toBeInTheDocument()
+
+    // Out on page 2 — where a search that did not start over would open: the
+    // only Zebra has one loan, and an offset of twenty-five would look past it.
+    await user.click(screen.getByText('Older →'))
+    await screen.findByText(/showing 26–26 of 26/i)
+
+    await user.type(screen.getByLabelText(/^search$/i), 'z')
+    expect(await screen.findByText(/showing 1–1 of 1/i)).toBeInTheDocument()
+    expect(within(screen.getByRole('region', { name: 'On loan' })).getAllByRole('listitem')).toHaveLength(1)
+  })
+})
+
+/*
  * Backup, through the seam.
  *
  * The panel used to reach past the seam into the mock, so with the live system

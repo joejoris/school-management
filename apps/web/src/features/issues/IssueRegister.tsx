@@ -21,8 +21,17 @@
  * void, renew — and a free "set the status" box would be worse: it would let a
  * loan say it was returned without a return date, or void without a reason,
  * which is the exact thing the domain refuses everywhere else.
+ *
+ * ── Pages, and the number that says there are more ─────────────────
+ *
+ * The register serves 25 lines at a time and offers the next 25, with
+ * "Showing 1–25 of 312" between the buttons. That total is the whole point:
+ * the old screen stopped at its fetch and said "Showing the first 200. Narrow
+ * the search to see the rest" — advice, not an answer. A librarian cannot tell
+ * the end of the register from the end of a fetch, and a register nobody can
+ * be sure they have seen all of is not one anybody signs off on.
  */
-import { useQuery, useQueryClient } from '@tanstack/react-query'
+import { keepPreviousData, useQuery, useQueryClient } from '@tanstack/react-query'
 import { useState } from 'react'
 import { type LoanRow } from '@library/contracts'
 import { api } from '../../api'
@@ -34,15 +43,28 @@ import { REGISTER_COLUMNS, download, registerRow, toCsv } from '../../lib/csv'
 const date = (iso: string | null) =>
   iso ? new Date(iso).toLocaleDateString('en-GB', { dateStyle: 'medium' }) : '—'
 
+/**
+ * Rows per page.
+ *
+ * A phone shows one stacked card per loan, so 25 is a screenful-and-a-bit
+ * rather than a wall — and the limit the contract already allows for a page.
+ */
+const PAGE = 25
+
 /** "Form 3, Red Stream" — whichever parts the school actually recorded. */
 const cohort = (r: LoanRow) => [r.form, r.stream].filter(Boolean).join(', ') || r.grade || '—'
 
 export function IssueRegister() {
   const [q, setQ] = useState('')
+  const [offset, setOffset] = useState(0)
 
   const loans = useQuery({
-    queryKey: ['loans', 'all', q],
-    queryFn: () => api.listLoans({ limit: 200, offset: 0, status: 'all', q: q.trim() || undefined }),
+    queryKey: ['loans', 'all', q, offset],
+    queryFn: () => api.listLoans({ limit: PAGE, offset, status: 'all', q: q.trim() || undefined }),
+    // The page being left stays on screen while the next one loads, so paging
+    // is a flicker-free swap rather than a flash of "Loading the register…" —
+    // which would also replace the buttons mid-press.
+    placeholderData: keepPreviousData,
   })
 
   if (loans.isPending) {
@@ -95,7 +117,12 @@ export function IssueRegister() {
               <Input
                 id="register-search"
                 value={q}
-                onChange={(e) => setQ(e.target.value)}
+                onChange={(e) => {
+                  // A new search starts at the first page. Left where it was, a
+                  // search on page 3 of a narrower result set opens past its end.
+                  setOffset(0)
+                  setQ(e.target.value)
+                }}
                 placeholder="Admission number, name, title or book number"
                 className="pl-9"
               />
@@ -130,6 +157,40 @@ export function IssueRegister() {
           </p>
         </div>
       </Card>
+
+      {/*
+        Which slice is on screen, and the way to the next one.
+
+        Placed above the buckets rather than below them: pressing "Older" from
+        the bottom of a page lands the reader at the bottom of the *next* page,
+        mid-list, with no idea which rows are which. From here, the new page
+        opens underneath the buttons they just pressed.
+      */}
+      {rows.length > 0 && loans.data ? (
+        <nav aria-label="Register pages" className="flex items-center justify-between gap-3">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={offset === 0 || loans.isFetching}
+            onClick={() => setOffset((o) => Math.max(0, o - PAGE))}
+          >
+            ← Newer
+          </Button>
+          <p className="numeric text-xs text-muted-foreground">
+            Showing {offset + 1}–{offset + rows.length} of {loans.data.total}
+          </p>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            disabled={!loans.data.hasMore || loans.isFetching}
+            onClick={() => setOffset((o) => o + PAGE)}
+          >
+            Older →
+          </Button>
+        </nav>
+      ) : null}
 
       {rows.length === 0 ? (
         <p className="py-10 text-center text-sm text-muted-foreground">
@@ -244,12 +305,6 @@ export function IssueRegister() {
           )}
         </section>
       ))}
-
-      {loans.data && loans.data.hasMore ? (
-        <p className="text-center text-sm text-muted-foreground">
-          Showing the first {rows.length}. Narrow the search to see the rest.
-        </p>
-      ) : null}
     </div>
   )
 }
