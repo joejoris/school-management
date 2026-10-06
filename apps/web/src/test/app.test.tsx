@@ -163,7 +163,7 @@ describe('the landing screen', () => {
   test('every destination in the rail exists', async () => {
     await mountSignedIn('/')
     const rail = await screen.findByRole('navigation', { name: /main/i })
-    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Audit']) {
       const link = within(rail).getByRole('link', { name: new RegExp(label, 'i') })
       expect(link).toHaveAttribute('href', expect.stringMatching(/^\//))
     }
@@ -428,7 +428,7 @@ describe('the sidebar belongs to a session, not to the page', () => {
 
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
     // Every one of those links would have been a dead end.
-    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Audit']) {
       expect(screen.queryByRole('link', { name: new RegExp(label, 'i') })).not.toBeInTheDocument()
     }
   })
@@ -1944,5 +1944,84 @@ describe('a student’s borrowing history', () => {
     expect(await screen.findByRole('heading', { name: /borrowing history/i })).toBeInTheDocument()
     expect(await screen.findByText(/no past borrowing yet/i)).toBeInTheDocument()
     expect(screen.getByText(/nothing out/i)).toBeInTheDocument()
+  })
+})
+
+/*
+ * The audit log.
+ *
+ * Where the register answers "what happened", the audit log answers "who did it
+ * and why" — every act, newest first, with the account and the details the act
+ * is read by. The mock had no rows to show because it never wrote any: it
+ * mirrored the live refusal sentences but not the live log-writes, so the
+ * screen that ships to the desk could only ever have been tested for "no events
+ * yet". The mock now writes the same (action, entity, before/after) rows the
+ * SQL functions write, and these tests read them.
+ */
+describe('the audit log', () => {
+  test('tells the story of what the desk did, newest first, with who and why', async () => {
+    await mountSignedIn('/audit', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+      })
+      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 2 })
+      const barcodes = (await api.getTitle(t.id)).copies.map((c) => c.barcode)
+
+      // One brought back…
+      const out = await api.checkout({ memberCode: 'S001', barcode: barcodes[0]! })
+      if (!out.ok) throw new Error(out.message)
+      const back = await api.returnLoan({ loanId: out.loan.id, conditionIn: 'good' })
+      if (!back.ok) throw new Error(back.message)
+
+      // …and one voided, with its reason.
+      const second = await api.checkout({ memberCode: 'S001', barcode: barcodes[1]! })
+      if (!second.ok) throw new Error(second.message)
+      const voided = await api.voidLoan(second.loan.id, 'returned to stock')
+      if (!voided.ok) throw new Error(voided.message)
+    })
+
+    await screen.findByRole('heading', { name: /audit log/i })
+
+    // Five acts: the first account (the mock mirrors `set_up_library`), two
+    // checkouts, the return, the void — newest first, so the void tops the list.
+    // Scoped to `main`: the rail's own links are also list items.
+    const cards = await within(screen.getByRole('main')).findAllByRole('listitem')
+    expect(cards).toHaveLength(5)
+    expect(within(cards[0]!).getByText('Voided')).toBeInTheDocument()
+    expect(within(cards[0]!).getByText('returned to stock')).toBeInTheDocument()
+    expect(within(cards[1]!).getByText('Checked out')).toBeInTheDocument()
+    expect(within(cards[1]!).getByText(/^S001 · BK-.* · due /)).toBeInTheDocument()
+    expect(within(cards[2]!).getByText('Returned')).toBeInTheDocument()
+    expect(within(cards[2]!).getByText('came back good')).toBeInTheDocument()
+    expect(within(cards[3]!).getByText('Checked out')).toBeInTheDocument()
+    expect(within(cards[3]!).getByText(/^S001 · BK-.* · due /)).toBeInTheDocument()
+    expect(within(cards[4]!).getByText('Library set up')).toBeInTheDocument()
+
+    // Every act names the account that did it — resolving the id to a name is
+    // the whole point of a log, not decoration.
+    expect(screen.getAllByText(/by Head Librarian/)).toHaveLength(5)
+
+    // The same pager as the register, so a term of checkouts stays reachable.
+    expect(screen.getByText(/showing 1–5 of 5/i)).toBeInTheDocument()
+  })
+
+  test('an assistant is refused, in words, and no log appears', async () => {
+    await mountSignedIn('/audit', async () => {
+      await api.appointUser({
+        email: 'desk@dandorasecondary.go.ke',
+        name: 'Pendo Wanjiru',
+        password: 'x',
+        role: 'assistant',
+      })
+      await api.signOut()
+      await api.signIn('desk@dandorasecondary.go.ke', 'x')
+    })
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your role (assistant) cannot audit read.')
+    expect(screen.queryByText(/showing 1–/)).not.toBeInTheDocument()
   })
 })

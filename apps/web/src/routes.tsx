@@ -35,6 +35,7 @@ import { IssueRegister } from './features/issues/IssueRegister'
 import { Students } from './features/issues/Students'
 import { ImportStudents } from './features/issues/ImportStudents'
 import { BackupPanel } from './features/issues/BackupPanel'
+import { AuditLog } from './features/issues/AuditLog'
 import { Button } from './components/ui'
 
 /*
@@ -100,6 +101,12 @@ const backupRoute = createRoute({
   component: BackupPanel,
 })
 
+const auditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: '/audit',
+  component: AuditLog,
+})
+
 /**
  * Anything else.
  *
@@ -139,6 +146,7 @@ export const routeTree = rootRoute.addChildren([
   registerRoute,
   importRoute,
   backupRoute,
+  auditRoute,
   notFoundRoute,
 ])
 

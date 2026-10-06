@@ -269,6 +269,12 @@ export class MockApi implements LibraryApi {
       createdAt: this.now(),
     }
     this.db.users.push(user)
+    // The first account, created signed out: the live `set_up_library` credits the
+    // account itself — it supplies its own id, because there is no actor yet.
+    this.auditWrite('set_up_library', 'user', user.id, {
+      after: { email: user.email, name: user.name, role: 'admin' },
+      actor: user.id,
+    })
     /*
      * No session is opened here.
      *
@@ -331,6 +337,9 @@ export class MockApi implements LibraryApi {
       createdAt: this.now(),
     }
     this.db.users.push(user)
+    this.auditWrite('create_user', 'user', user.id, {
+      after: { email: user.email, name: user.name, role: user.role },
+    })
     // The administrator's own session is untouched -- on the real backend `signUp`
     // replaces the browser's session, and that is where it gets put back.
     return user
@@ -396,7 +405,12 @@ export class MockApi implements LibraryApi {
     if (status === 'disabled' && user.role === 'admin' && this.countActiveAdmins() <= 1) {
       throw new DomainRefusalError('This is the last working account. You cannot switch it off.')
     }
+    const previousStatus = user.status
     user.status = status
+    this.auditWrite('set_user_status', 'user', user.id, {
+      before: { status: previousStatus },
+      after: { status },
+    })
     return user
   }
 
@@ -410,7 +424,12 @@ export class MockApi implements LibraryApi {
     if (user.role === 'admin' && role !== 'admin' && this.countActiveAdmins() <= 1) {
       throw new DomainRefusalError('This is the last working account. You cannot change its role.')
     }
+    const previousRole = user.role
     user.role = role
+    this.auditWrite('set_user_role', 'user', user.id, {
+      before: { role: previousRole },
+      after: { role },
+    })
     return user
   }
 
@@ -422,6 +441,40 @@ export class MockApi implements LibraryApi {
    */
   private countActiveAdmins(): number {
     return this.db.users.filter((u) => u.role === 'admin' && u.status === 'active').length
+  }
+
+  /**
+   * The audit entry the live functions write for the same act.
+   *
+   * One row per act — who, what, which row, what it said before and after —
+   * keyed by the same (action, entity) pairs and carrying the same small
+   * before/after objects the SQL functions build. The mock used to keep this
+   * list *empty*, so the Audit screen could only ever say "no events yet" in
+   * the copy that ships to the desk, and a real log shape had no test
+   * standing in for it. The actor is the signed-in account, null only for the
+   * first-account setup, which happens signed out — the same answer
+   * `current_user_id()` gives.
+   */
+  private auditWrite(
+    action: string,
+    entity: string,
+    entityId: string,
+    opts: {
+      before?: Record<string, unknown> | null
+      after?: Record<string, unknown> | null
+      actor?: string | null
+    } = {},
+  ): void {
+    this.db.audit.push({
+      id: `a_${this.db.audit.length + 1}`,
+      actor: opts.actor !== undefined ? opts.actor : this.db.sessionUserId,
+      action,
+      entity,
+      entityId,
+      before: opts.before ?? null,
+      after: opts.after ?? null,
+      createdAt: this.now(),
+    })
   }
 
   // ── Circulation ───────────────────────────────────────────────────
@@ -488,6 +541,16 @@ export class MockApi implements LibraryApi {
     this.db.loans.push(loan)
     copy.status = 'on_loan'
 
+    this.auditWrite('checkout', 'loan', loan.id, {
+      after: {
+        member_code: input.memberCode,
+        barcode: input.barcode,
+        due_at: dueAt,
+        overridden: input.override ?? false,
+        reason: input.overrideReason ?? null,
+      },
+    })
+
     return { ok: true, loan, dueAt, copyStatus: copy.status }
   }
 
@@ -538,6 +601,9 @@ export class MockApi implements LibraryApi {
     const due = new Date(Date.parse(this.now()) + type.loanPeriodDays * DAY).toISOString()
     loan.dueAt = due
     loan.renewCount += 1
+    this.auditWrite('renew', 'loan', loan.id, {
+      after: { due_at: due, renew_count: loan.renewCount, reason: input.overrideReason ?? null },
+    })
     return { ok: true, loan }
   }
 
@@ -576,10 +642,13 @@ export class MockApi implements LibraryApi {
       copy.status = input.toShelf === false ? 'at_desk' : 'on_shelf'
       copy.condition = input.conditionIn
     }
+    this.auditWrite('return', 'loan', loan.id, {
+      after: { copy_id: loan.copyId, condition_in: input.conditionIn },
+    })
     return { ok: true, loan, holdPromoted: false }
   }
 
-  async markLost(loanId: string, _reason: string): Promise<ReturnResult> {
+  async markLost(loanId: string, reason: string): Promise<ReturnResult> {
     this.need('loans.void')
     const loan = this.db.loans.find((l) => l.id === loanId)
     if (!loan) return { ok: false, refusal: 'not_found', message: REFUSAL_MESSAGES.not_found }
@@ -590,11 +659,16 @@ export class MockApi implements LibraryApi {
     loan.returnedAt = this.now()
     const copy = this.db.copies.find((c) => c.id === loan.copyId)
     if (copy) copy.status = 'lost'
+    // A damaged report lands here too — the live backend has no separate
+    // `mark_damaged` function, only `mark_lost`, so this is the honest mirror.
+    this.auditWrite('mark_lost', 'loan', loan.id, {
+      after: { reason: reason.trim() },
+    })
     return { ok: true, loan, holdPromoted: false }
   }
 
-  async markDamaged(loanId: string, _reason: string): Promise<ReturnResult> {
-    return this.markLost(loanId, _reason)
+  async markDamaged(loanId: string, reason: string): Promise<ReturnResult> {
+    return this.markLost(loanId, reason)
   }
 
   async voidLoan(loanId: string, reason: string): Promise<VoidResult> {
@@ -616,6 +690,10 @@ export class MockApi implements LibraryApi {
     loan.voidedAt = this.now()
     const copy = this.db.copies.find((c) => c.id === loan.copyId)
     if (copy) copy.status = 'on_shelf'
+    this.auditWrite('void', 'loan', loan.id, {
+      before: { status: 'active' },
+      after: { status: 'void', reason: reason.trim() },
+    })
     return { ok: true, loan }
   }
 
@@ -1077,6 +1155,9 @@ export class MockApi implements LibraryApi {
     // disappearing is the thing auditors look for.
     this.addTxn(fine.id, 'waiver', -fine.balance, input.reason)
     fine.status = 'waived'
+    this.auditWrite('waive', 'fine', fine.id, {
+      after: { amount: fine.balance, reason: input.reason.trim() },
+    })
     return { ok: true, fine: this.detailFor(fine) }
   }
 
@@ -1091,6 +1172,9 @@ export class MockApi implements LibraryApi {
       return { ok: false, refusal: 'too_much', message: REFUSAL_MESSAGES.too_much }
     }
     this.addTxn(fine.id, 'payment', -input.amountCents, input.reason)
+    this.auditWrite('payment', 'fine', fine.id, {
+      after: { amount: input.amountCents, reason: input.reason ?? null },
+    })
     return { ok: true, fine: this.detailFor(fine) }
   }
 
@@ -1306,6 +1390,12 @@ export class MockApi implements LibraryApi {
     let rows = [...this.db.audit]
     if (query.entityType) rows = rows.filter((a) => a.entity === query.entityType)
     if (query.action) rows = rows.filter((a) => a.action === query.action)
+    // Newest first, the way the live backend orders it (`created_at desc`): the
+    // register and the log both open on what happened most recently, and a log
+    // that shuffled its age order from one backend to the other would read as a
+    // log with entries missing. Id breaks the tie for entries from the same
+    // moment, so a page boundary cannot depend on insertion order.
+    rows.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id))
     return paginate(rows, query)
   }
 

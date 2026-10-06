@@ -31,6 +31,7 @@ import {
   Receipt,
   SchoolLogo,
   Sliders,
+  ScrollText,
   Upload,
   Users,
 } from './components/icons'
@@ -46,6 +47,7 @@ const LINKS = [
   { to: '/staff', label: 'Staff', icon: Users, end: false },
   { to: '/import', label: 'Import', icon: Upload, end: false },
   { to: '/backup', label: 'Backup', icon: Archive, end: false },
+  { to: '/audit', label: 'Audit', icon: ScrollText, end: false },
 ] as const
 
 function Rail() {

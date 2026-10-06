@@ -580,3 +580,79 @@ describe('the register’s search on the live database', () => {
     }
   })
 })
+
+/*
+ * The audit log, on the live database.
+ *
+ * `audit` answers "who did what and why" and it is read newest-first. The page
+ * goes through `camelize` at the boundary like everything else, so `entity_id`
+ * and `created_at` arrive as the contract's `entityId` and `createdAt`; the
+ * only translation left to the method is the query's own filters.
+ */
+describe('the audit log on the live database', () => {
+  test('asks newest-first and maps the snake_case columns', async () => {
+    const s = stub([
+      {
+        json: [
+          {
+            id: 'a_1',
+            actor: 'u_1',
+            action: 'void',
+            entity: 'loan',
+            entity_id: 'l_9',
+            before: { status: 'active' },
+            after: { status: 'void', reason: 'returned to stock' },
+            created_at: '2026-10-06T08:00:00.000Z',
+          },
+        ],
+        headers: { 'Content-Range': '0-0/12' },
+      },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const result = await api.getAuditLog({ limit: 25, offset: 0 })
+
+      const asked = decodeURIComponent(s.calls[0]!.url)
+      expect(asked).toContain('audit?')
+      // A log opens on the most recent act, the way the register opens on the
+      // newest loan.
+      expect(asked).toContain('order=created_at.desc')
+      expect(asked).toContain('limit=25')
+      expect(asked).toContain('offset=0')
+
+      // The total comes from Content-Range, the columns from camelize.
+      expect(result.total).toBe(12)
+      expect(result.hasMore).toBe(true)
+      expect(result.items[0]).toMatchObject({
+        actor: 'u_1',
+        action: 'void',
+        entity: 'loan',
+        entityId: 'l_9',
+        before: { status: 'active' },
+        after: { status: 'void', reason: 'returned to stock' },
+        createdAt: '2026-10-06T08:00:00.000Z',
+      })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('narrows by entity and action when the screen asks', async () => {
+    const s = stub([{ json: [], headers: { 'Content-Range': '0-0/0' } }])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const result = await api.getAuditLog({ limit: 25, offset: 0, entityType: 'loan', action: 'void' })
+      expect(result.items).toEqual([])
+
+      const asked = decodeURIComponent(s.calls[0]!.url)
+      expect(asked).toContain('entity=eq.loan')
+      expect(asked).toContain('action=eq.void')
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})

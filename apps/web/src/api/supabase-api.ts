@@ -34,6 +34,8 @@
 import type {
   AddCopiesInput,
   AssessFineInput,
+  AuditEntry,
+  AuditQuery,
   CheckoutInput,
   CheckoutResult,
   CreateUserInput,
@@ -1247,8 +1249,20 @@ export class SupabaseApi implements LibraryApi {
     return { key, value }
   }
 
-  async getAuditLog(query: { limit: number; offset: number }): Promise<Page<import('@library/contracts').AuditEntry>> {
-    return this.page<import('@library/contracts').AuditEntry>('audit', query, { order: 'created_at.desc' })
+  async getAuditLog(query: AuditQuery): Promise<Page<AuditEntry>> {
+    // The columns are snake_case underneath (`entity_id`, `created_at`), which
+    // `camelize` converts at the boundary, so the only thing to translate here
+    // is the query: `entityType`/`action` become `eq.` filters, the same way the
+    // mock narrows its in-memory list.
+    return this.page<AuditEntry>('audit', {
+      ...query,
+      // A log opens on the most recent act, like the register opens on the
+      // newest loan.
+      sort: query.sort ?? 'created_at.desc',
+    }, {
+      entity: query.entityType ? `eq.${query.entityType}` : undefined,
+      action: query.action ? `eq.${query.action}` : undefined,
+    })
   }
 
   async listNotifications(): Promise<import('@library/contracts').Notification[]> {
