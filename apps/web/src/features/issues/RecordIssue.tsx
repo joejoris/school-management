@@ -289,10 +289,7 @@ export function RecordIssue() {
                 <Input
                   id="studentName"
                   value={draft.studentName}
-                  onChange={(e) => {
-                    set('studentName', e.target.value)
-                    set('memberCode', '') // a typed name is not yet a chosen student
-                  }}
+                  onChange={(e) => set('studentName', e.target.value)}
                   placeholder="Kept Student"
                   autoComplete="off"
                   // The one field the form is about. Everything else can wait.
@@ -306,6 +303,7 @@ export function RecordIssue() {
               */}
               {search.data && search.data.items.length > 0 && !knownMember ? (
                 <ul className="grid gap-1.5">
+                  <li className="text-xs tracking-wide text-muted-foreground uppercase">Tap the student you mean</li>
                   {search.data.items.map((s) => (
                     <li key={s.id}>
                       <button
