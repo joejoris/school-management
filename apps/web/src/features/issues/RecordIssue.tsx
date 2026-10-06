@@ -233,15 +233,13 @@ export function RecordIssue() {
   })
 
   const canSubmit = Boolean(knownMember) && draft.barcode.trim().length > 0
+  const locked = Boolean(knownMember)
 
   /*
    * The admission number is no longer typed on this screen. It remains the
    * student's id throughout the system -- loans, fines, holds -- but the entry
    * task starts from a face, not a code, and the code sits behind the name.
    */
-  const locked = Boolean(knownMember)
-  const nameTypedLongEnough = draft.studentName.trim().length > 1
-  const unknownMember = nameTypedLongEnough && !knownMember && search.isFetched
 
   return (
     <div className="mx-auto flex w-full max-w-3xl flex-col gap-5 py-2">
@@ -324,12 +322,6 @@ export function RecordIssue() {
                     </li>
                   ))}
                 </ul>
-              ) : null}
-
-              {unknownMember && search.data && search.data.items.length === 0 ? (
-                <p className="rounded-lg border border-accent bg-accent/40 px-4 py-3 text-sm text-muted-foreground">
-                  Nobody with that name is on file. Add them from the Students screen first.
-                </p>
               ) : null}
 
               {/*

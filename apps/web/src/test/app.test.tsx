@@ -221,7 +221,7 @@ describe('the entry form, filled in', () => {
     expect(loans.items[0]?.memberCode).toBe('S001')
   })
 
-  test('a name that matches nobody says so, plainly', async () => {
+  test('a name that is not on file offers no match list and keeps the button shut', async () => {
     const { user } = await mountSignedIn('/', async () => {
       await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
     })
@@ -229,13 +229,12 @@ describe('the entry form, filled in', () => {
 
     await user.type(screen.getByLabelText(/student's name/i), 'Nobody Here')
 
-    await waitFor(async () => {
-      expect(
-        await screen.findByText(/nobody with that name is on file/i),
-      ).toBeInTheDocument()
-    })
-    // The button stays shut until a real student is picked -- no invention of a record.
-    expect(screen.getByRole('button', { name: /record issue/i })).toBeDisabled()
+    // Nothing is promised that the screen cannot keep. It does not say the name is
+    // wrong; it simply offers nothing to pick, and the issue cannot be recorded until a
+    // real student is chosen -- no invention of a record, no lecturing.
+    await new Promise((r) => setTimeout(r, 200))
+    expect(screen.queryByRole('button', { name: /record issue/i })).toBeDisabled()
+    expect(screen.queryByText(/nobody with that name/i)).not.toBeInTheDocument()
   })
 
   test('stream is free text, and the hint says so', async () => {
