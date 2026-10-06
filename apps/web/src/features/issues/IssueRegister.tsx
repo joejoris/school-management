@@ -328,7 +328,7 @@ function ReturnedTick({ loan }: { loan: LoanRow }) {
           await queryClient.invalidateQueries({ queryKey: ['loans'] })
         }}
       />
-      Not returned
+      Returned
     </label>
   )
 }
