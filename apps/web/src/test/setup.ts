@@ -27,6 +27,41 @@ if (!window.matchMedia) {
   })) as typeof window.matchMedia
 }
 
+/*
+ * jsdom's File and Blob have no `text()`.
+ *
+ * The backup panel reads the chosen file before it offers to replace everything
+ * with it, and `await undefined.file.text()` throws in a way that would surface as
+ * "That file is not a library backup" — a test that passes for the wrong reason,
+ * or fails for the right code and the wrong environment. FileReader is jsdom's own,
+ * so this is the same read through the API jsdom does have.
+ */
+if (typeof Blob.prototype.text !== 'function') {
+  Object.defineProperty(Blob.prototype, 'text', {
+    configurable: true,
+    value(this: Blob): Promise<string> {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader()
+        reader.onload = () => resolve(String(reader.result ?? ''))
+        reader.onerror = () => reject(reader.error)
+        reader.readAsText(this)
+      })
+    },
+  })
+}
+
+/*
+ * jsdom has no object URLs, and every "download a file" button goes through one.
+ *
+ * Without this the download path throws before it can report anything, so the
+ * screens' own confirmation ("Backup saved to your downloads.") is untestable.
+ * The stub returns a fixed string; nothing here follows the URL.
+ */
+if (typeof URL.createObjectURL !== 'function') {
+  URL.createObjectURL = () => 'blob:jsdom'
+  URL.revokeObjectURL = () => {}
+}
+
 beforeEach(() => {
   // Cleared between tests so a mirrored register from one test cannot make the
   // next one see rows it never created. This class of leak produces a test that

@@ -334,3 +334,44 @@ describe('switching a member of staff off', () => {
     }
   })
 })
+
+describe('backup against the live system', () => {
+  test('exporting reads every table, not the browser copy', async () => {
+    const tables = [
+      'users', 'member_types', 'members', 'titles', 'shelf_locations',
+      'copies', 'loans', 'holds', 'fines', 'fine_txns', 'imports', 'audit', 'settings',
+    ]
+    // 13 responses, each a one-row array (settings needs its key/value shape).
+    const s = stub(tables.map((t) => ({ json: t === 'settings' ? [{ key: 'k', value: 1 }] : [] })))
+    const api = makeApi('session-token')
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const snap = await api.exportBackup()
+      // Every table was asked for by name.
+      for (const t of tables) {
+        expect(s.calls.some((c) => c.url.includes(`/rest/v1/${t}`))).toBe(true)
+      }
+      expect(snap.settings).toEqual({ k: 1 })
+      // The session user is not part of a backup file: it is who is signed in
+      // right now, on this device, not something a file should carry.
+      expect(Object.keys(snap)).not.toContain('sessionUserId')
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('putting a copy back is refused with a sentence, not an exception', async () => {
+    // No DELETE policies and no client INSERT on loans/fines/fine_txns exist by
+    // design, so the live backend cannot "replace everything". The refusal is a
+    // value the screen renders — a thrown error would reach the desk as an
+    // unexpected failure rather than an explanation.
+    const api = makeApi(null)
+    const result = await api.importBackup({ users: [], members: [] })
+    expect(result.ok).toBe(false)
+    if (!result.ok) {
+      expect(result.refusal).toBe('restore_refused')
+      expect(result.message).toMatch(/copy to keep/i)
+    }
+  })
+})

@@ -1115,4 +1115,47 @@ export class SupabaseApi implements LibraryApi {
     // would be a shape for a feature nobody has asked for.
     return []
   }
+
+  async exportBackup(): Promise<import('@library/contracts').LibrarySnapshot> {
+    const [users, memberTypes, members, titles, shelfLocations, copies, loans, holds, fines, fineTxns, imports, audit, settingsRows] = await Promise.all([
+      this.list<unknown>('users'),
+      this.list('member_types'),
+      this.list('members'),
+      this.list('titles'),
+      this.list('shelf_locations'),
+      this.list('copies'),
+      this.list('loans'),
+      this.list('holds'),
+      this.list('fines'),
+      this.list('fine_txns'),
+      this.list('imports'),
+      this.list('audit'),
+      this.list<{ key: string; value: unknown }>('settings'),
+    ])
+    const settings = Object.fromEntries((settingsRows as Array<{ key: string; value: unknown }>).map((s) => [s.key, s.value]))
+    return {
+      users: users as import('@library/contracts').LibrarySnapshot['users'],
+      memberTypes: memberTypes as import('@library/contracts').LibrarySnapshot['memberTypes'],
+      members: members as import('@library/contracts').LibrarySnapshot['members'],
+      titles: titles as import('@library/contracts').LibrarySnapshot['titles'],
+      shelfLocations: shelfLocations as import('@library/contracts').LibrarySnapshot['shelfLocations'],
+      copies: copies as import('@library/contracts').LibrarySnapshot['copies'],
+      loans: loans as import('@library/contracts').LibrarySnapshot['loans'],
+      holds: holds as import('@library/contracts').LibrarySnapshot['holds'],
+      fines: fines as import('@library/contracts').LibrarySnapshot['fines'],
+      fineTxns: fineTxns as import('@library/contracts').LibrarySnapshot['fineTxns'],
+      imports: imports as import('@library/contracts').LibrarySnapshot['imports'],
+      audit: audit as import('@library/contracts').LibrarySnapshot['audit'],
+      settings,
+    } as import('@library/contracts').LibrarySnapshot
+  }
+
+  async importBackup(_snapshot: unknown): Promise<import('@library/contracts').BackupResult> {
+    const { REFUSAL_MESSAGES } = await import('@library/contracts')
+    return {
+      ok: false,
+      refusal: 'restore_refused',
+      message: REFUSAL_MESSAGES.restore_refused,
+    }
+  }
 }

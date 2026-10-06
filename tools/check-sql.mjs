@@ -261,14 +261,27 @@ else {
    *
    * `forbidden` is the exception: it arrives from several functions that have no result
    * shape of their own and raise instead.
+   *
+   * The backup codes are the other exception, and the reason is a different producer:
+   * a backup is read and written by the client itself, in TypeScript, never by a
+   * database function. `malformed` comes from the mock refusing a file that is not a
+   * snapshot, and `restore_refused` from the live backend refusing to rewrite the
+   * register from a browser — both are real, reachable refusals; they simply have no
+   * SQL to be found in. Listing them here rather than loosening the rule keeps the
+   * check strict for every code that *should* come from the database.
    */
-  const unreachable = [...knownCodes].filter((c) => !sqlCodes.has(c) && c !== 'forbidden')
+  const clientOnly = new Set(['malformed', 'restore_refused'])
+  const unreachable = [...knownCodes].filter(
+    (c) => !sqlCodes.has(c) && c !== 'forbidden' && !clientOnly.has(c),
+  )
   if (unreachable.length) {
     for (const c of unreachable) {
       fail(`'${c}' is in a contract union but no SQL function returns it — nothing can ever produce it`)
     }
   } else {
-    pass(`every contract code is reachable from a SQL function (${knownCodes.size} of them)`)
+    pass(
+      `every contract code is reachable from a SQL function or produced in TypeScript (${knownCodes.size} of them)`,
+    )
   }
 }
 

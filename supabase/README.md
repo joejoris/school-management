@@ -106,7 +106,8 @@ The first account is always an administrator, whatever it asks for.
 
 - all 14 tables have RLS enabled
 - every refusal code the SQL can return is in a contract union, and every code in a
-  union is reachable from a SQL function — no invented codes, no dead ones
+  union is reachable from a SQL function or produced by the client itself (the two
+  backup codes) — no invented codes, no dead ones
 - every refusal code has a sentence in `REFUSAL_MESSAGES`, so no screen can render nothing
 - `loans`, `fines` and `fine_txns` have **no** insert/update/delete policy, and their
   write privileges are revoked — so they are written only by the functions

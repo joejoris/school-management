@@ -23,6 +23,7 @@ import type {
   Hold,
   ImportJob,
   ImportRowError,
+  LibrarySnapshot,
   Loan,
   LoanRow,
   Member,
@@ -39,7 +40,7 @@ import type {
   User,
 } from './entities.ts'
 import type { CopyCondition, CopyStatus, MemberStatus, Role, UserStatus } from './enums.ts'
-import type { CheckoutResult, PaymentResult, RenewResult, ReturnResult, VoidResult } from './refusals.ts'
+import type { BackupResult, CheckoutResult, PaymentResult, RenewResult, ReturnResult, VoidResult } from './refusals.ts'
 import type { Page, PageQuery } from './page.ts'
 
 // ── Queries ─────────────────────────────────────────────────────────
@@ -390,6 +391,8 @@ export interface LibraryApi {
   updateSetting(key: string, value: unknown): Promise<Setting>
   getAuditLog(query: AuditQuery): Promise<Page<AuditEntry>>
   listNotifications(): Promise<Notification[]>
+  exportBackup(): Promise<LibrarySnapshot>
+  importBackup(snapshot: unknown): Promise<BackupResult>
 }
 
 // Local aliases, so this file does not have to re-export the input shapes.

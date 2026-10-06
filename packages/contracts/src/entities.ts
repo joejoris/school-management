@@ -381,6 +381,23 @@ export const DashboardSummary = z.object({
 })
 export type DashboardSummary = z.infer<typeof DashboardSummary>
 
+export const LibrarySnapshot = z.object({
+  users: z.array(User),
+  memberTypes: z.array(MemberType),
+  members: z.array(Member),
+  titles: z.array(Title),
+  shelfLocations: z.array(ShelfLocation),
+  copies: z.array(Copy),
+  loans: z.array(Loan),
+  holds: z.array(Hold),
+  fines: z.array(Fine),
+  fineTxns: z.array(FineTxn),
+  audit: z.array(AuditEntry),
+  imports: z.array(ImportJob),
+  settings: z.record(z.string(), z.unknown()),
+})
+export type LibrarySnapshot = z.infer<typeof LibrarySnapshot>
+
 export const ReportResult = z.object({
   columns: z.array(z.string()),
   rows: z.array(z.array(z.string())),

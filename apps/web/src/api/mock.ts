@@ -64,7 +64,7 @@ import type {
 import { CHECKABLE_COPY_STATUSES, paginate } from '@library/contracts'
 import { can, deny } from '@library/contracts'
 import { REFUSAL_MESSAGES, OVERRIDABLE, DomainRefusalError } from '@library/contracts'
-import type { CheckoutRefusal, PaymentResult, VoidResult } from '@library/contracts'
+import type { BackupResult, CheckoutRefusal, LibrarySnapshot, PaymentResult, VoidResult } from '@library/contracts'
 
 const DAY = 86_400_000
 
@@ -1296,6 +1296,30 @@ export class MockApi implements LibraryApi {
   async listNotifications(): Promise<Notification[]> {
     this.need('loans.read')
     return []
+  }
+
+  async exportBackup(): Promise<LibrarySnapshot> {
+    const state = this.exportState()
+    const { sessionUserId: _sessionUserId, ...rest } = state
+    return rest as LibrarySnapshot
+  }
+
+  async importBackup(snapshot: unknown): Promise<BackupResult> {
+    try {
+      this.importState(snapshot)
+    } catch (e) {
+      const message = e instanceof Error ? e.message : 'That backup could not be read.'
+      return { ok: false, refusal: 'malformed', message }
+    }
+    return {
+      ok: true,
+      restored: {
+        members: this.db.members.length,
+        titles: this.db.titles.length,
+        copies: this.db.copies.length,
+        loans: this.db.loans.length,
+      },
+    }
   }
 
   // ── Internals ─────────────────────────────────────────────────────

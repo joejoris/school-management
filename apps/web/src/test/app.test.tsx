@@ -1690,3 +1690,95 @@ describe('the register as a file', () => {
     expect(screen.getByText(/nothing to download/i)).toBeInTheDocument()
   })
 })
+
+/*
+ * Backup, through the seam.
+ *
+ * The panel used to reach past the seam into the mock, so with the live system
+ * connected the "Download a backup" button produced a file of the empty practice
+ * store while the screen said "Backup saved to your downloads." A backup that
+ * succeeds and contains nothing is the worst possible shape for this feature: it
+ * is indistinguishable from a real one until the term it should have saved.
+ *
+ * These tests therefore assert what the *screen* gets out of the seam, and that
+ * a refusal to restore arrives as a sentence rather than an exception.
+ */
+describe('backup', () => {
+  test('the download is the connected backend’s records, not the practice store', async () => {
+    const { user } = await mountSignedIn('/backup', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+      })
+    })
+    await screen.findByRole('heading', { name: /^backup$/i })
+
+    let saved: Blob | null = null
+    const realCreate = URL.createObjectURL
+    URL.createObjectURL = ((blob: Blob) => {
+      saved = blob
+      return 'blob:test'
+    }) as typeof URL.createObjectURL
+    try {
+      await user.click(screen.getByRole('button', { name: /download a backup/i }))
+    } finally {
+      URL.createObjectURL = realCreate
+    }
+
+    expect(saved).toBeTruthy()
+    const text = await (saved as unknown as Blob).text()
+    const parsed = JSON.parse(text) as { members: Array<{ memberCode: string }> }
+    expect(parsed.members.map((m) => m.memberCode)).toContain('S001')
+    // The file is a library, not a session: who is signed in on this device is
+    // not something a backup should carry to another one.
+    expect(parsed).not.toHaveProperty('sessionUserId')
+
+    await screen.findByText(/saved to your downloads/i)
+  })
+
+  test('a restore reports its counts, and a bad file is a sentence not a crash', async () => {
+    await mountSignedIn('/backup')
+
+    const snapshot = await api.exportBackup()
+    expect(snapshot.members).toHaveLength(0)
+
+    // A file that parses as JSON but is not a library.
+    const bad = await api.importBackup({ students: [] })
+    expect(bad.ok).toBe(false)
+    if (!bad.ok) {
+      expect(bad.message).toMatch(/not a library snapshot/i)
+    }
+
+    // And a real one.
+    await api.createMember({
+      memberCode: 'S001',
+      firstName: 'Kept',
+      lastName: 'Student',
+      type: 'student',
+    })
+    const good = await api.importBackup(await api.exportBackup())
+    expect(good.ok).toBe(true)
+    if (good.ok) expect(good.restored.members).toBe(1)
+  })
+
+  test('the preview counts what the file actually holds', async () => {
+    const { user } = await mountSignedIn('/backup')
+    await screen.findByRole('heading', { name: /^backup$/i })
+
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    const file = new File(
+      [JSON.stringify({ members: [{ memberCode: 'S001' }], copies: [{ barcode: 'BK-1' }], loans: [] })],
+      'library-backup.json',
+      { type: 'application/json' },
+    )
+    await user.upload(input, file)
+
+    // The keys the snapshot carries. The preview used to read `students` and
+    // `books`, which exist in no backup this app has ever written, so every file
+    // promised "0 students, 0 books" and gave a librarian no way to tell two
+    // backups apart.
+    expect(await screen.findByText(/1 students, 1 books, 0 loans/i)).toBeInTheDocument()
+  })
+})

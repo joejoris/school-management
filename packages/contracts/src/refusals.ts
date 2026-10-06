@@ -157,6 +157,16 @@ export type PaymentResult =
   | { ok: true; fine: FineDetail }
   | { ok: false; refusal: PaymentRefusal; message: string }
 
+export const BackupRefusal = ['malformed', 'restore_refused', 'forbidden'] as const
+export type BackupRefusal = (typeof BackupRefusal)[number]
+
+export type BackupResult =
+  | {
+      ok: true
+      restored: { members: number; titles: number; copies: number; loans: number }
+    }
+  | { ok: false; refusal: BackupRefusal; message: string }
+
 export type ReturnResult =
   | {
       ok: true
@@ -175,9 +185,13 @@ export type ReturnResult =
  * developer reading a log.
  */
 export const REFUSAL_MESSAGES: Record<
-  CheckoutRefusal | RenewRefusal | ReturnRefusal | VoidRefusal | PaymentRefusal | AdminRefusal,
+  CheckoutRefusal | RenewRefusal | ReturnRefusal | VoidRefusal | PaymentRefusal | AdminRefusal | BackupRefusal,
   string
 > = {
+  // backup
+  malformed: 'That file is not a library backup.',
+  restore_refused:
+    'The school’s system never rewrites the register from a browser. This file is a copy to keep, not something to put back.',
   // checkout
   member_not_found: 'No student on file with that number.',
   member_suspended: 'That student is not active.',
