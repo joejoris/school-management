@@ -31,14 +31,12 @@ import {
   Receipt,
   SchoolLogo,
   Sliders,
-  TableIcon,
   Upload,
   Users,
 } from './components/icons'
 
 const LINKS = [
   { to: '/', label: 'Record issue', icon: BookPlus, end: true },
-  { to: '/register', label: 'Register', icon: TableIcon, end: false },
   // Catalogue sits second, not last: without a book on the shelf nothing else in
   // this app can be tried, so it is the next thing anybody needs.
   { to: '/catalogue', label: 'Catalogue', icon: Library, end: false },
@@ -185,7 +183,7 @@ function Rail() {
                 >
                   <Icon className="size-5 shrink-0" />
                   {/* `aria-hidden`: the anchor already carries this name, so announcing
-                  it twice would read "Register, Register". */}
+                  it twice would read "Catalogue, Catalogue". */}
               <span aria-hidden className={cn('truncate', !open && 'hidden')}>
                 {label}
               </span>

@@ -163,7 +163,7 @@ describe('the landing screen', () => {
   test('every destination in the rail exists', async () => {
     await mountSignedIn('/')
     const rail = await screen.findByRole('navigation', { name: /main/i })
-    for (const label of ['Record issue', 'Register', 'Import', 'Backup']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup']) {
       const link = within(rail).getByRole('link', { name: new RegExp(label, 'i') })
       expect(link).toHaveAttribute('href', expect.stringMatching(/^\//))
     }
@@ -428,7 +428,7 @@ describe('the sidebar belongs to a session, not to the page', () => {
 
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
     // Every one of those links would have been a dead end.
-    for (const label of ['Record issue', 'Register', 'Import', 'Backup']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup']) {
       expect(screen.queryByRole('link', { name: new RegExp(label, 'i') })).not.toBeInTheDocument()
     }
   })
@@ -696,7 +696,7 @@ describe('the sidebar pops up', () => {
   test('every destination is named while collapsed, and again when open', async () => {
     const { user } = await mountSignedIn('/')
     const nav = await screen.findByRole('navigation', { name: /main/i })
-    const labels = ['Record issue', 'Register', 'Import', 'Backup']
+    const labels = ['Record issue', 'Catalogue', 'Import', 'Backup']
 
     for (const label of labels) {
       expect(within(nav).getByRole('link', { name: new RegExp(label, 'i') })).toBeInTheDocument()
@@ -743,11 +743,11 @@ describe('the sidebar pops up', () => {
     const nav = await screen.findByRole('navigation', { name: /main/i })
 
     await user.click(screen.getByRole('button', { name: /expand the menu/i }))
-    await user.click(within(nav).getByRole('link', { name: /register/i }))
+    await user.click(within(nav).getByRole('link', { name: /catalogue/i }))
 
-    // Left open, it would sit over the register somebody just asked for.
+    // Left open, it would sit over the catalogue somebody just asked for.
     await waitFor(() => expect(isExpanded()).toBe('false'))
-    expect(await screen.findByRole('heading', { name: /issue register/i })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { name: /^catalogue$/i })).toBeInTheDocument()
   })
 })
 
@@ -942,10 +942,10 @@ describe('circulation at the desk', () => {
    * one that occasionally says so.
    */
   test('a book goes out and comes back, through the screens', { timeout: 20_000 }, async () => {
-    const { user } = await stocked('/')
+    const { user, router } = await stocked('/')
     await lend(user)
 
-    await user.click(screen.getByRole('link', { name: /register/i }))
+    await router.navigate({ to: '/register' })
     await screen.findByRole('heading', { name: /issue register/i })
 
     await user.click(desk().getByRole('button', { name: /^return$/i }))
@@ -965,7 +965,7 @@ describe('circulation at the desk', () => {
   })
 
   test('a book on loan is unavailable, and a returned one is available again', async () => {
-    const { user } = await stocked('/catalogue')
+    const { user, router } = await stocked('/catalogue')
     // Nothing is out yet, so the copy is on the shelf.
     expect(await screen.findByText(/1 of 1 available/i)).toBeInTheDocument()
 
@@ -975,7 +975,7 @@ describe('circulation at the desk', () => {
     await user.click(screen.getByRole('link', { name: /catalogue/i }))
     expect(await screen.findByText(/0 of 1 available/i)).toBeInTheDocument()
 
-    await user.click(screen.getByRole('link', { name: /register/i }))
+    await router.navigate({ to: '/register' })
     await screen.findByRole('heading', { name: /issue register/i })
     await user.click(desk().getByRole('button', { name: /^return$/i }))
     await user.click(screen.getByRole('button', { name: /record the return/i }))
@@ -987,10 +987,10 @@ describe('circulation at the desk', () => {
   })
 
   test('a void needs a reason, and keeps it in the register', async () => {
-    const { user } = await stocked('/')
+    const { user, router } = await stocked('/')
     await lend(user)
 
-    await user.click(screen.getByRole('link', { name: /register/i }))
+    await router.navigate({ to: '/register' })
     await screen.findByRole('heading', { name: /issue register/i })
 
     await user.click(desk().getByRole('button', { name: /^void$/i }))
@@ -1021,11 +1021,11 @@ describe('circulation at the desk', () => {
   })
 
   test('the actions are absent once a loan is closed', async () => {
-    const { user } = await stocked('/')
+    const { user, router } = await stocked('/')
     await lend(user)
 
     // Four buttons the domain would refuse every time is worse than none.
-    await user.click(screen.getByRole('link', { name: /register/i }))
+    await router.navigate({ to: '/register' })
     await screen.findByRole('heading', { name: /issue register/i })
     expect(desk().getByRole('button', { name: /^return$/i })).toBeInTheDocument()
 
@@ -1044,10 +1044,10 @@ describe('circulation at the desk', () => {
   })
 
   test('a renewal limit is reported as a sentence, not a silent failure', async () => {
-    const { user } = await stocked('/')
+    const { user, router } = await stocked('/')
     await lend(user)
 
-    await user.click(screen.getByRole('link', { name: /register/i }))
+    await router.navigate({ to: '/register' })
     await screen.findByRole('heading', { name: /issue register/i })
 
     // A student may renew twice, so the third press is the one that must be refused
