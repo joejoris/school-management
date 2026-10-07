@@ -44,6 +44,18 @@ export function Sliders({ className, ...p }: IconProps) {
   )
 }
 
+/** Six counts at a glance. Reads as a bar chart with a baseline. */
+export function ChartBars({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <line x1="4" y1="20" x2="20" y2="20" />
+      <line x1="8" y1="20" x2="8" y2="10" />
+      <line x1="12.5" y1="20" x2="12.5" y2="4" />
+      <line x1="17" y1="20" x2="17" y2="14" />
+    </svg>
+  )
+}
+
 export function Library({ className, ...p }: IconProps) {
   return (
     <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>

@@ -163,7 +163,7 @@ describe('the landing screen', () => {
   test('every destination in the rail exists', async () => {
     await mountSignedIn('/')
     const rail = await screen.findByRole('navigation', { name: /main/i })
-    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Audit']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Dashboard', 'Audit']) {
       const link = within(rail).getByRole('link', { name: new RegExp(label, 'i') })
       expect(link).toHaveAttribute('href', expect.stringMatching(/^\//))
     }
@@ -428,7 +428,7 @@ describe('the sidebar belongs to a session, not to the page', () => {
 
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
     // Every one of those links would have been a dead end.
-    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Audit']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Dashboard', 'Audit']) {
       expect(screen.queryByRole('link', { name: new RegExp(label, 'i') })).not.toBeInTheDocument()
     }
   })
@@ -2023,6 +2023,61 @@ describe('the audit log', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Your role (assistant) cannot audit read.')
     expect(screen.queryByText(/showing 1–/)).not.toBeInTheDocument()
+  })
+})
+
+/*
+ * Dashboard.
+ *
+ * Six counts for the head of the library. The numbers come from one function
+ * (`get_dashboard`), and the screen is admin-only because that function is:
+ * the mock refuses the call without `reports.run` just as the live backend's
+ * `can()` does. These tests read the screen as the two people who might open
+ * it — the administrator, who gets the six figures, and the assistant, who
+ * gets the sentence instead of the figures.
+ */
+describe('dashboard', () => {
+  test('an administrator sees the library at a glance', async () => {
+    const { user } = await mountSignedIn('/dashboard', async () => {
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+      await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
+      // One title, one copy, and it is out: three of the six counts are 1.
+      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const out = await api.checkout({
+        memberCode: 'S001',
+        barcode: (await api.getTitle(t.id)).copies[0]!.barcode,
+      })
+      if (!out.ok) throw new Error(out.message)
+    })
+
+    expect(await screen.findByText('Titles')).toBeInTheDocument()
+    for (const label of ['Copies', 'Out now', 'Overdue', 'Owed', 'Active students']) {
+      expect(screen.getByText(label)).toBeInTheDocument()
+    }
+    // Titles, Copies and Out now are all 1; Overdue is 0; two active students;
+    // nothing owed yet.
+    expect(screen.getAllByText('1')).toHaveLength(3)
+    expect(screen.getByText('0')).toBeInTheDocument()
+    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.getByText('KSh 0.00')).toBeInTheDocument()
+    void user
+  })
+
+  test('an assistant is refused, in words, and no figures appear', async () => {
+    await mountSignedIn('/dashboard', async () => {
+      await api.appointUser({
+        email: 'desk@dandorasecondary.go.ke',
+        name: 'Pendo Wanjiru',
+        password: 'x',
+        role: 'assistant',
+      })
+      await api.signOut()
+      await api.signIn('desk@dandorasecondary.go.ke', 'x')
+    })
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your role (assistant) cannot reports run.')
+    expect(screen.queryByText('Titles')).not.toBeInTheDocument()
   })
 })
 

@@ -1199,19 +1199,26 @@ export class SupabaseApi implements LibraryApi {
   // ── ops ───────────────────────────────────────────────────────────
 
   async getDashboard(): Promise<import('@library/contracts').DashboardSummary> {
-    const [copies, loans, fines, members] = await Promise.all([
-      this.list<{ status: string }>('copies', { status: 'eq.on_shelf' }),
-      this.list<{ status: string }>('loans', { status: 'eq.active' }),
-      this.list<{ balance: number }>('fines', { status: 'eq.outstanding' }),
-      this.list<{ status: string }>('members', { status: 'eq.active' }),
-    ])
+    // `rpc` camelizes the body (see the note on `rest`), so the function's
+    // snake_case keys arrive here as the contract's camelCase fields.
+    const res = await this.rpc<{
+      ok: boolean
+      totalTitles?: number
+      totalCopies?: number
+      onLoan?: number
+      overdue?: number
+      outstandingFines?: number
+      activeMembers?: number
+      message?: string
+    }>('get_dashboard')
+    if (!res.ok) throw new SupabaseRefusal('request_failed', res.message ?? 'The library figures could not be read.')
     return {
-      totalTitles: copies.length,
-      totalCopies: copies.length,
-      onLoan: loans.length,
-      overdue: loans.length,
-      outstandingFines: fines.reduce((s, f) => s + f.balance, 0),
-      activeMembers: members.length,
+      totalTitles: res.totalTitles ?? 0,
+      totalCopies: res.totalCopies ?? 0,
+      onLoan: res.onLoan ?? 0,
+      overdue: res.overdue ?? 0,
+      outstandingFines: res.outstandingFines ?? 0,
+      activeMembers: res.activeMembers ?? 0,
     }
   }
 

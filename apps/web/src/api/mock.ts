@@ -1341,14 +1341,16 @@ export class MockApi implements LibraryApi {
   // ── Ops ───────────────────────────────────────────────────────────
 
   async getDashboard(): Promise<DashboardSummary> {
-    this.need('loans.read')
+    this.need('reports.run')
     const now = Date.parse(this.now())
     return {
       totalTitles: this.db.titles.length,
       totalCopies: this.db.copies.length,
       onLoan: this.db.loans.filter((l) => l.status === 'active').length,
       overdue: this.db.loans.filter((l) => l.status === 'active' && Date.parse(l.dueAt) < now).length,
-      outstandingFines: this.db.fines.reduce((s, f) => s + f.balance, 0),
+      outstandingFines: this.db.fines
+        .filter((f) => f.status === 'outstanding' || f.status === 'partially_paid')
+        .reduce((s, f) => s + f.balance, 0),
       activeMembers: this.db.members.filter((m) => m.status === 'active').length,
     }
   }

@@ -750,3 +750,53 @@ describe('holds against the live database', () => {
     }
   })
 })
+
+describe('the dashboard', () => {
+  test('comes from one function, and the snake_case figures land camelCase', async () => {
+    const s = stub([
+      {
+        json: {
+          ok: true,
+          total_titles: 3,
+          total_copies: 12,
+          on_loan: 4,
+          overdue: 1,
+          outstanding_fines: 2500,
+          active_members: 41,
+        },
+      },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const d = await api.getDashboard()
+
+      expect(s.calls[0]!.url).toContain('/rest/v1/rpc/get_dashboard')
+      expect(s.calls[0]!.method).toBe('POST')
+
+      expect(d).toEqual({
+        totalTitles: 3,
+        totalCopies: 12,
+        onLoan: 4,
+        overdue: 1,
+        outstandingFines: 2500,
+        activeMembers: 41,
+      })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('a refused function keeps its sentence and is not thrown as a raw response', async () => {
+    const s = stub([{ json: { ok: false, message: 'Your role cannot run the library figures.' } }])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      await expect(api.getDashboard()).rejects.toThrow(/your role cannot run the library figures/i)
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})
