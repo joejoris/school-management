@@ -4,9 +4,9 @@ Record book issues, deadlines, returns and fines for the school library. Built f
 a phone at the desk, and for a tablet when there is time to sit down.
 
 The default build runs entirely in the browser against an in-memory store, and
-every rule is enforced. A Supabase backend now exists — schema, RLS and a client —
-but **it has never been run**. See `supabase/README.md`, which says exactly what has
-been checked and what has not, and gives you a way to check the rest yourself.
+every rule is enforced. A Supabase backend also exists — schema, RLS and a
+client — and `npm run check` reads the SQL to confirm the two halves agree.
+See `supabase/README.md` for what has been checked and what has not.
 
 ---
 
@@ -34,16 +34,14 @@ npm run build      # a static bundle in apps/web/dist
 | | |
 |---|---|
 | Domain rules | 26 tests |
-| Circulation, end to end | 43 tests |
-| Screens, mounted and clicked | 20 tests |
-| **Total** | **89 tests, 0 type errors** |
+| The client, against a stub | 33 tests |
+| Circulation, fines, the register | 44 tests |
+| Screens, mounted and clicked | 122 tests |
+| **Total** | **225 tests, 0 type errors** |
 | Guards proved to fail against broken code | 6 of 6 |
 
-`npm run prove` is the part worth keeping. It breaks six things on purpose — the
-landing route redirecting to itself, a dashboard put back in front of the entry
-form, the catch-all quietly redirecting, a suggestion list back on the stream
-field, a form that empties when it complains, a submit button enabled too early —
-and requires each guard to fail. A test that has never been seen to fail is not
+`npm run prove` is the part worth keeping. It breaks things on purpose and
+requires each guard to fail. A test that has never been seen to fail is not
 known to work.
 
 ---
@@ -136,30 +134,23 @@ role is now derived from the session, so they cannot drift.
 
 Stated plainly, because a README that overstates is worse than none.
 
-**There is no database.** The app talks to an in-memory store through a single
-seam (`apps/web/src/api/index.ts`). Set `VITE_API_MODE=supabase` and it throws
-with an explanation rather than silently falling back — a mock register looks
-exactly like a real one, and a fallback that cannot be noticed is a register that
-empties on reload after somebody has typed a term into it.
+**The default build is still in-memory.** The app talks to an in-memory store
+through a single seam (`apps/web/src/api/index.ts`). Set `VITE_API_MODE=supabase`
+and it throws with an explanation rather than silently falling back — a mock
+register looks exactly like a real one, and a fallback that cannot be noticed is
+a register that empties on reload after somebody has typed a term into it. The
+Supabase backend exists and the two halves are checked against each other, but
+the mock is what runs by default.
 
-**There is no password hashing.** `signIn` matches an email and ignores the
-password. In a browser there is nowhere safe to keep a hash, and pretending to
-verify one teaches a reader that passwords are protected here. The first real
-backend must not inherit this. There is also no "forgot password" link, and no
-reset mail — a link that says "email yourself a reset" and does nothing is worse
-than no link.
-
-**`getImportJob` and `listImportRowErrors` return what they have.** Imports are
-kept in memory so those two work, but the job list is not durable.
+**There is no "forgot password" link, and no reset mail.** A link that says
+"email yourself a reset" and does nothing is worse than no link. (The real
+backend hashes passwords through Supabase Auth; the mock does not, because
+there is nowhere safe to keep a hash in a browser.)
 
 **Nothing has run on a real phone.** The layout decisions are reasoned and the
 screens are mounted and clicked in jsdom, which is not a viewport. 343px was
 assumed to be the narrow case and `dvh` was used wherever a full-height layout is
 wanted, but a real handset is the next thing to check.
-
-**The dashboard, members list, catalogue, holds and reports are not built.** The
-domain supports all of them and the interface declares them; the screens do not
-exist yet.
 
 ---
 
@@ -177,8 +168,11 @@ packages/contracts/    The rules. No React, no fetch, no mocking library.
 apps/web/
   src/api/index.ts     THE SEAM. The one file that changes when the backend arrives
   src/api/mock.ts      The rules, running
+  src/api/supabase-api.ts  The same rules, over PostgREST
   src/routes.tsx       No /login. No /dashboard. / is the entry form.
   src/features/auth/   The gate: setup, sign-in, and who is at the desk
-  src/features/issues/ The entry form, the register, import, backup
+  src/features/issues/ The desk: entry form, register, catalogue, students, staff,
+                       fines, holds, dashboard, reports, policy, audit, backup, import
   tools/prove-guards.mjs  Breaks the code to prove the tests are load-bearing
+  tools/check-sql.mjs  Reads the SQL and the contract, and agrees them
 ```

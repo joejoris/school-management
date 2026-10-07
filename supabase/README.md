@@ -1,18 +1,11 @@
 # Connecting the frontend to Supabase
 
-**None of the SQL here has ever been run.** This is not a formality — it was checked
-against a live project with the public anon key, signed out, and every table and
-function came back `PGRST205` / `PGRST202`: not in the schema cache. The database is
-empty.
+Read this file as "here is what to try", not "here is what works". `npm run check`
+reads the SQL and confirms the two halves agree — every refusal code, every
+grant, every table — but it does not run any of it. What needs a live database
+is listed at the bottom.
 
-That is at least safe. An empty schema holds nothing to leak, so the anon key — which
-is public by design and ships inside the browser bundle — currently carries no data at
-all. It stops being true the moment these migrations are applied, which is what the
-grants at the bottom of `0003` are for.
-
-Read this file as "here is what to try", not "here is what works".
-
-Four files, run in order, in the Supabase dashboard's **SQL Editor**:
+Eleven files, run in order, in the Supabase dashboard's **SQL Editor**:
 
 | | |
 |---|---|
@@ -20,6 +13,13 @@ Four files, run in order, in the Supabase dashboard's **SQL Editor**:
 | `migrations/0002_circulation.sql` | issuing, returning, renewing, voiding, fines, the accrual |
 | `migrations/0003_rls_and_seed.sql` | row level security, grants, the seed rows |
 | `migrations/0004_staff.sql` | switching an account off, changing a role |
+| `migrations/0005_close_functions_to_public.sql` | close every function to `public`, then reopen two |
+| `migrations/0006_appoint_staff.sql` | appointing a second librarian |
+| `migrations/0007_hold_expiry.sql` | intraday hold expiry and queue rotation |
+| `migrations/0008_dashboard.sql` | the library at a glance |
+| `migrations/0009_assess_fine.sql` | assessing a fine by hand |
+| `migrations/0010_reports.sql` | the library's numbers as CSV |
+| `migrations/0011_close_create_user_account.sql` | close `create_user_account` to the anon key |
 
 Run them one at a time. A typo in any statement fails that whole file, and running
 them in one go means you cannot tell which.
@@ -116,7 +116,7 @@ The first account is always an administrator, whatever it asks for.
 - no delete policy exists anywhere, on purpose
 - every update policy carries a `with check`
 
-**Not checked** — this needs a database, and there is none:
+**Not checked** — this needs a live database:
 
 - that the SQL parses. A typo in any statement fails its whole file.
 - that the plpgsql variable and record types line up.
