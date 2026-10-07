@@ -24,12 +24,12 @@
  * from the domain's own list of issuable statuses rather than counted as "copies
  * minus copies on loan".
  */
-import { useState } from 'react'
+import { useState, type ChangeEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import type { TitleSummary } from '@library/contracts'
+import type { TitleDetail, TitleSummary } from '@library/contracts'
 import { api } from '../../api'
 import { Button, Card, Field, Input, cn } from '../../components/ui'
-import { BookPlus, Plus, Search, TriangleAlert } from '../../components/icons'
+import { BookPlus, Pencil, Plus, Search, TriangleAlert } from '../../components/icons'
 import { CopyActions } from './CopyActions'
 
 const date = (iso: string) => new Date(iso).toLocaleDateString('en-GB', { dateStyle: 'medium' })
@@ -279,6 +279,8 @@ function TitleRow({
                 </Button>
               </div>
 
+              <TitleDetails title={copies.data} />
+
               <WaitingList titleId={title.id} />
             </>
           )}
@@ -296,6 +298,194 @@ function TitleRow({
  */
 function isWholeNumber(v: string): boolean {
   return /^[1-9]\d*$/.test(v.trim())
+}
+
+/** The title's editable fields, as the form holds them — blank, never null. */
+function detailsFrom(t: TitleDetail) {
+  return {
+    title: t.title,
+    author: t.author,
+    isbn: t.isbn ?? '',
+    publisher: t.publisher ?? '',
+    publishedYear: t.publishedYear?.toString() ?? '',
+    subject: t.subject ?? '',
+    callNumber: t.callNumber ?? '',
+  }
+}
+
+/** A trimmed box that was left empty is "nothing", not the empty string. */
+const orNull = (v: string): string | null => (v.trim().length > 0 ? v.trim() : null)
+
+/** A year that is a whole number, or nothing. `Number('')` is 0, which is no year. */
+function yearOrNull(v: string): number | null {
+  if (v.trim().length === 0) return null
+  const n = Number(v)
+  return Number.isInteger(n) ? n : null
+}
+
+/**
+ * Correcting a title's own details.
+ *
+ * A title's metadata is what a search finds and what a shelf label prints, so
+ * getting it right matters and getting it wrong is ordinary: an author spelled
+ * wrong at cataloguing, an ISBN added a term later, a shelf number that moved.
+ *
+ * The copies are not here. A copy is the thing with a barcode — added, marked
+ * lost, withdrawn — and each of those is its own act with its own permission.
+ * This form is only the row above them.
+ *
+ * `titles.write` is the permission and it belongs to the database: the live
+ * backend PATCHes under the `titles_update` policy, and a desk without it — an
+ * assistant reads the catalogue but does not rewrite it — gets the domain's
+ * sentence rather than a button that was quietly hidden.
+ */
+function TitleDetails({ title }: { title: TitleDetail }) {
+  const queryClient = useQueryClient()
+  const [open, setOpen] = useState(false)
+  const [saved, setSaved] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [form, setForm] = useState(() => detailsFrom(title))
+
+  const save = useMutation({
+    mutationFn: () =>
+      api.updateTitle(title.id, {
+        title: form.title.trim(),
+        author: form.author.trim(),
+        isbn: orNull(form.isbn),
+        publisher: orNull(form.publisher),
+        publishedYear: yearOrNull(form.publishedYear),
+        subject: orNull(form.subject),
+        callNumber: orNull(form.callNumber),
+      }),
+    onSuccess: async () => {
+      setError(null)
+      setSaved(true)
+      setOpen(false)
+      await queryClient.invalidateQueries({ queryKey: ['titles'] })
+      await queryClient.invalidateQueries({ queryKey: ['title', title.id] })
+    },
+    onError: (e: unknown) =>
+      setError(e instanceof Error ? e.message : 'Could not save those details.'),
+  })
+
+  // Re-seeded on each open, so a form left half-edited and closed does not come
+  // back holding fields the row no longer has.
+  const openForm = () => {
+    setForm(detailsFrom(title))
+    setError(null)
+    setSaved(false)
+    setOpen(true)
+  }
+
+  const canSave =
+    form.title.trim().length > 0 &&
+    form.author.trim().length > 0 &&
+    (form.publishedYear.trim().length === 0 || yearOrNull(form.publishedYear) !== null)
+
+  const set = (k: keyof ReturnType<typeof detailsFrom>) => (e: ChangeEvent<HTMLInputElement>) =>
+    setForm((f) => ({ ...f, [k]: e.target.value }))
+
+  return (
+    <div className="mt-4 border-t border-border pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h4 className="text-sm font-medium">Title details</h4>
+        {!open ? (
+          <Button type="button" size="sm" variant="outline" onClick={openForm}>
+            <Pencil className="size-4" /> Edit details
+          </Button>
+        ) : null}
+      </div>
+
+      {saved && !open ? (
+        <p role="status" className="mt-2 text-sm text-muted-foreground">
+          Saved. The catalogue now shows those details.
+        </p>
+      ) : null}
+
+      {open ? (
+        <form
+          className="mt-3 grid gap-3"
+          onSubmit={(e) => {
+            e.preventDefault()
+            setError(null)
+            save.mutate()
+          }}
+        >
+          <Field label="Title" htmlFor={`edit-title-${title.id}`}>
+            <Input id={`edit-title-${title.id}`} value={form.title} onChange={set('title')} autoFocus />
+          </Field>
+
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label="Author" htmlFor={`edit-author-${title.id}`}>
+              <Input id={`edit-author-${title.id}`} value={form.author} onChange={set('author')} />
+            </Field>
+
+            <Field label="ISBN" htmlFor={`edit-isbn-${title.id}`} hint="Optional.">
+              <Input
+                id={`edit-isbn-${title.id}`}
+                value={form.isbn}
+                onChange={set('isbn')}
+                className="numeric"
+              />
+            </Field>
+
+            <Field label="Publisher" htmlFor={`edit-publisher-${title.id}`} hint="Optional.">
+              <Input
+                id={`edit-publisher-${title.id}`}
+                value={form.publisher}
+                onChange={set('publisher')}
+              />
+            </Field>
+
+            <Field label="Published" htmlFor={`edit-year-${title.id}`} hint="Optional. The year.">
+              <Input
+                id={`edit-year-${title.id}`}
+                value={form.publishedYear}
+                onChange={set('publishedYear')}
+                inputMode="numeric"
+                className="numeric"
+              />
+            </Field>
+
+            <Field label="Subject" htmlFor={`edit-subject-${title.id}`} hint="Optional.">
+              <Input
+                id={`edit-subject-${title.id}`}
+                value={form.subject}
+                onChange={set('subject')}
+              />
+            </Field>
+
+            <Field label="Shelf number" htmlFor={`edit-call-${title.id}`} hint="Optional.">
+              <Input
+                id={`edit-call-${title.id}`}
+                value={form.callNumber}
+                onChange={set('callNumber')}
+                className="numeric"
+              />
+            </Field>
+          </div>
+
+          {error ? (
+            <p
+              role="alert"
+              className="rounded-lg border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
+              {error}
+            </p>
+          ) : null}
+
+          <div className="flex justify-end gap-3">
+            <Button type="button" variant="ghost" onClick={() => setOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="submit" disabled={!canSave || save.isPending}>
+              {save.isPending ? 'Saving…' : 'Save the details'}
+            </Button>
+          </div>
+        </form>
+      ) : null}
+    </div>
+  )
 }
 
 /**

@@ -53,10 +53,16 @@ function stub(responses: { json?: unknown; status?: number; headers?: Record<str
 
     const r = responses[at++] ?? responses[responses.length - 1] ?? {}
     const status = r.status ?? 200
-    return new Response(r.text ?? (r.json === undefined ? '' : JSON.stringify(r.json)), {
-      status,
-      headers: { 'Content-Type': 'application/json', ...(r.headers ?? {}) },
-    })
+    const body = r.text ?? (r.json === undefined ? '' : JSON.stringify(r.json))
+    return new Response(
+      // 204 and friends must have a null body, and the constructor enforces it —
+      // a PATCH that returns nothing is exactly the case this is here for.
+      status === 204 || status === 205 || status === 304 ? null : body,
+      {
+        status,
+        headers: { 'Content-Type': 'application/json', ...(r.headers ?? {}) },
+      },
+    )
   }
 
   return { impl, calls }
@@ -908,6 +914,60 @@ describe('reports against the live database', () => {
     globalThis.fetch = s.impl as never
     try {
       await expect(api.runReport('register')).rejects.toThrow(/your role cannot run the reports/i)
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})
+
+describe('editing a title', () => {
+  test('patches the row and re-reads it, in snake_case on the wire', async () => {
+    const s = stub([
+      { status: 204 },
+      {
+        json: [
+          {
+            id: 't_1',
+            title: 'Things We Carry',
+            author: 'Tim O’Brien',
+            isbn: '9780000000000',
+            publisher: null,
+            published_year: 1990,
+            subject: null,
+            call_number: 'F OBR',
+            created_at: '2026-01-01T00:00:00.000Z',
+            updated_at: '2026-10-06T00:00:00.000Z',
+          },
+        ],
+      },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const updated = await api.updateTitle('t_1', {
+        title: 'Things We Carry',
+        author: 'Tim O’Brien',
+        isbn: '9780000000000',
+        publisher: null,
+        publishedYear: 1990,
+        subject: null,
+        callNumber: 'F OBR',
+      })
+
+      expect(s.calls[0]!.method).toBe('PATCH')
+      expect(s.calls[0]!.url).toContain('/rest/v1/titles')
+      expect(s.calls[0]!.url).toContain('id=eq.t_1')
+      // camelCase at the contract, snake_case on the wire — the column names.
+      expect(s.calls[0]!.body).toMatchObject({ published_year: 1990, call_number: 'F OBR' })
+
+      // And the answer read back is the row the database now holds.
+      expect(updated).toMatchObject({
+        id: 't_1',
+        author: 'Tim O’Brien',
+        publishedYear: 1990,
+        callNumber: 'F OBR',
+      })
     } finally {
       globalThis.fetch = real
     }

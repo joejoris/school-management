@@ -67,6 +67,16 @@ export function Download({ className, ...p }: IconProps) {
   )
 }
 
+/** A pencil: correcting a row's details. */
+export function Pencil({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <path d="M4 20h4L19 9a2.12 2.12 0 0 0-3-3L5 17z" />
+      <path d="m14 6 4 4" />
+    </svg>
+  )
+}
+
 export function Library({ className, ...p }: IconProps) {
   return (
     <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>

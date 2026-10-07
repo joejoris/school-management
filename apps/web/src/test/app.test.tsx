@@ -871,6 +871,53 @@ describe('the catalogue', () => {
     await user.type(screen.getByLabelText(/^search$/i), 'nothing like this')
     expect(await screen.findByText(/nothing matches that search/i)).toBeInTheDocument()
   })
+
+  test('a title’s details can be corrected, and the catalogue shows them', async () => {
+    const { user } = await mountSignedIn('/catalogue', () =>
+      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 }),
+    )
+    await screen.findByText('Things We Carry')
+
+    // The details live with the copies, so the row is opened first.
+    await user.click(screen.getByRole('button', { name: /things we carry/i }))
+    await user.click(await screen.findByRole('button', { name: /edit details/i }))
+
+    const author = screen.getByLabelText(/^author$/i)
+    await user.clear(author)
+    await user.type(author, 'Tim O’Brien, corrected')
+    await user.type(screen.getByLabelText(/^isbn$/i), '9780000000000')
+    await user.click(screen.getByRole('button', { name: /save the details/i }))
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/saved/i)
+    // The row redraws from the invalidated query, so what is read back is the
+    // backend's answer rather than the form's memory of what was typed.
+    expect(await screen.findByText(/O’Brien, corrected/i)).toBeInTheDocument()
+  })
+
+  test('an assistant cannot rewrite a title, and is told in words', async () => {
+    // An assistant reads the catalogue — it is how a book is found — but
+    // `titles.write` is the administrator's, the same gate the live database
+    // hangs on the titles_update policy.
+    const { user } = await mountSignedIn('/catalogue', async () => {
+      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      await api.appointUser({
+        email: 'desk@dandorasecondary.go.ke',
+        name: 'Pendo Wanjiru',
+        password: 'x',
+        role: 'assistant',
+      })
+      await api.signOut()
+      await api.signIn('desk@dandorasecondary.go.ke', 'x')
+    })
+    await screen.findByText('Things We Carry')
+
+    await user.click(screen.getByRole('button', { name: /things we carry/i }))
+    await user.click(await screen.findByRole('button', { name: /edit details/i }))
+    await user.click(screen.getByRole('button', { name: /save the details/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your role (assistant) cannot titles write.')
+  })
 })
 
 describe('circulation at the desk', () => {
