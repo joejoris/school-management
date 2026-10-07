@@ -2127,4 +2127,37 @@ describe('holds', () => {
       await screen.findByText(/your role \(assistant\) cannot holds write\./i),
     ).toBeInTheDocument()
   })
+
+  test('a held copy is refused at the issue form with a sentence nobody can talk over', async () => {
+    let barcode = ''
+    const { user } = await mountSignedIn('/', async () => {
+      await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
+      await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
+      await api.createMember({ memberCode: 'S003', firstName: 'Third', lastName: 'Student', type: 'student' })
+      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      barcode = (await api.getTitle(t.id)).copies[0]!.barcode
+      // S1 borrows the only copy, S2 holds it, S1 returns it: the copy is now
+      // pinned behind the desk for S2.
+      const out = await api.checkout({ memberCode: 'S001', barcode })
+      if (!out.ok) throw new Error(out.message)
+      const second = await api.findMemberByCode('S002')
+      if (!second) throw new Error('setup failed')
+      await api.placeHold({ memberId: second.id, titleId: t.id })
+      const back = await api.returnLoan({ loanId: out.loan.id, conditionIn: 'good', toShelf: false })
+      if (!back.ok) throw new Error(back.message)
+    })
+
+    await screen.findByRole('heading', { name: /record a book issue/i })
+
+    // The third student scans the held book. The answer names the reason —
+    // it is being kept for somebody — rather than the shelf position.
+    await user.type(screen.getByLabelText(/admission number/i), 'S003')
+    await user.type(screen.getByLabelText(/book number/i), barcode)
+    await user.click(screen.getByRole('button', { name: /record issue/i }))
+    expect(await screen.findByRole('alert')).toHaveTextContent(/being held for another student/i)
+
+    // And the form keeps what was typed: it is the person who is wrong, not
+    // the book number.
+    expect(screen.getByLabelText(/book number/i)).toHaveValue(barcode)
+  })
 })

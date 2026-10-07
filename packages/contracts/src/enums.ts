@@ -95,7 +95,7 @@ export type FineStatus = (typeof FineStatus)[number]
 export const FineTxnKind = ['charge', 'payment', 'waiver', 'refund'] as const
 export type FineTxnKind = (typeof FineTxnKind)[number]
 
-export const HoldStatus = ['open', 'filled', 'expired', 'cancelled'] as const
+export const HoldStatus = ['open', 'filled', 'expired', 'cancelled', 'collected'] as const
 export type HoldStatus = (typeof HoldStatus)[number]
 
 export const ImportKind = ['students', 'stock', 'loans'] as const

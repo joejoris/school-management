@@ -480,6 +480,41 @@ export class MockApi implements LibraryApi {
   // ── Circulation ───────────────────────────────────────────────────
 
   /**
+   * The desk sweeps on the way in — the same on-access pattern as fine
+   * accrual. A filled hold promises the book for three days; once that has
+   * passed the promise lapses, the copy is released, and the next member in
+   * line (if any) is offered it. Mirrors live `sweep_holds`.
+   */
+  private sweepHolds(at?: string): void {
+    const now = at ?? this.now()
+    for (const hold of this.db.holds.filter(
+      (h) => h.status === 'filled' && h.expiresAt !== null && h.expiresAt <= now,
+    )) {
+      const copy = this.db.copies.find((c) => c.id === hold.copyId)
+      // A collected hold's copy is on loan; sweeping it would put a book
+      // somebody is reading back on the shelf.
+      if (!copy || !['at_desk', 'on_shelf'].includes(copy.status)) continue
+      hold.status = 'expired'
+      this.auditWrite('hold_expired', 'hold', hold.id, {
+        after: { member_id: hold.memberId, copy_id: hold.copyId },
+      })
+      const next = this.db.holds
+        .filter((h) => h.titleId === copy.titleId && h.status === 'open')
+        .sort((a, b) => a.placedAt.localeCompare(b.placedAt))[0]
+      if (next) {
+        next.status = 'filled'
+        next.copyId = hold.copyId
+        next.expiresAt = new Date(Date.parse(now) + 3 * DAY).toISOString()
+        this.auditWrite('hold_filled', 'hold', next.id, {
+          after: { member_id: next.memberId, copy_id: hold.copyId },
+        })
+      } else if (copy.status === 'at_desk') {
+        copy.status = 'on_shelf'
+      }
+    }
+  }
+
+  /**
    * Issues a book.
    *
    * Every check is here, and each one is a refusal the librarian reads rather
@@ -488,6 +523,7 @@ export class MockApi implements LibraryApi {
    */
   async checkout(input: CheckoutInput): Promise<CheckoutResult> {
     this.need('loans.checkout')
+    this.sweepHolds()
 
     // Exact match. Never case-insensitive: two codes differing only in case are
     // two students, and issuing to the wrong one is worse than saying no.
@@ -500,10 +536,29 @@ export class MockApi implements LibraryApi {
     const type = this.typeFor(member.type)
 
     if (member.status !== 'active') return this.refuse('member_suspended')
+
     // The check that matters most. Everything else is recoverable; issuing the
     // same physical book to two students is not.
-    if (!CHECKABLE_COPY_STATUSES.includes(copy.status)) {
-      return this.refuse(copy.status === 'on_loan' ? 'copy_on_loan' : copy.status === 'lost' ? 'copy_lost' : 'copy_unavailable')
+    if (copy.status === 'on_loan') return this.refuse('copy_on_loan')
+    if (copy.status === 'lost') return this.refuse('copy_lost')
+
+    // A copy a filled hold pins belongs to that member until the hold lapses
+    // or is collected. The sweep ran at the top, so a pin still standing here
+    // is a live promise, not a stale one.
+    const pinned = this.db.holds.find(
+      (h) => h.copyId === copy.id && h.status === 'filled' && h.expiresAt !== null && h.expiresAt > this.now(),
+    )
+    if (pinned && pinned.memberId !== member.id) {
+      return this.refuse('copy_reserved')
+    }
+    if (pinned && pinned.memberId === member.id) {
+      // Collecting. The promise is spent: the book is now on loan to them.
+      pinned.status = 'collected'
+      this.auditWrite('hold_collected', 'hold', pinned.id, {
+        after: { member_id: member.id, copy_id: copy.id },
+      })
+    } else if (!CHECKABLE_COPY_STATUSES.includes(copy.status)) {
+      return this.refuse('copy_unavailable')
     }
 
     const open = this.db.loans.filter((l) => l.memberId === member.id && l.status === 'active').length
@@ -579,6 +634,7 @@ export class MockApi implements LibraryApi {
 
   async renew(input: RenewInput): Promise<RenewResult> {
     this.need('loans.renew')
+    this.sweepHolds()
     const loan = this.db.loans.find((l) => l.id === input.loanId)
     if (!loan) return { ok: false, refusal: 'not_found', message: REFUSAL_MESSAGES.not_found }
     if (loan.status !== 'active') {
@@ -609,6 +665,7 @@ export class MockApi implements LibraryApi {
 
   async returnLoan(input: ReturnInput): Promise<ReturnResult> {
     this.need('loans.return')
+    this.sweepHolds()
     const loan = this.db.loans.find((l) => l.id === input.loanId)
     if (!loan) return { ok: false, refusal: 'not_found', message: REFUSAL_MESSAGES.not_found }
     if (loan.status !== 'active') {

@@ -64,6 +64,10 @@ function actionLabel(a: AuditEntry): string {
       return 'Waived'
     case 'hold_filled':
       return 'Hold filled'
+    case 'hold_expired':
+      return 'Hold lapsed'
+    case 'hold_collected':
+      return 'Hold collected'
     case 'create_user':
       return 'Account appointed'
     case 'set_user_role':
