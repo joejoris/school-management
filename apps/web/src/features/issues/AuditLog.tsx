@@ -62,6 +62,8 @@ function actionLabel(a: AuditEntry): string {
       return 'Payment recorded'
     case 'waive':
       return 'Waived'
+    case 'assess':
+      return 'Fine assessed'
     case 'hold_filled':
       return 'Hold filled'
     case 'hold_expired':

@@ -1196,6 +1196,78 @@ describe('fines at the desk', () => {
     expect(screen.getAllByText(/nothing owing/i)).toHaveLength(2)
   })
 
+  test('a fine can be assessed by hand, and lands on the owing list', async () => {
+    const { user, container } = await mountSignedIn('/fines', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+      })
+    })
+    await screen.findByText(/nobody owes anything/i)
+
+    await user.click(screen.getByRole('button', { name: /assess a fine/i }))
+    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+    await user.type(screen.getByLabelText(/^amount \(ksh\)$/i), '2.50')
+    await user.selectOptions(screen.getByLabelText(/reason/i), 'damage')
+    await user.type(screen.getByLabelText(/note/i), 'Cover torn')
+    await user.click(screen.getByRole('button', { name: /assess this fine/i }))
+
+    // The form says what it did, naming the student the fine is on.
+    expect(await screen.findByText(/assessed ksh 2\.50 for s001/i)).toBeInTheDocument()
+
+    // And the owing list now carries it: 250 cents shown as KSh 2.50, with the
+    // reason written down beside it.
+    await waitFor(() => expect(container).toHaveTextContent('2.50'))
+    expect(container).toHaveTextContent('Cover torn')
+  })
+
+  test('an admission number nobody is on file with refuses in words', async () => {
+    const { user } = await mountSignedIn('/fines')
+    await screen.findByText(/nobody owes anything/i)
+
+    await user.click(screen.getByRole('button', { name: /assess a fine/i }))
+    await user.type(screen.getByLabelText(/admission number/i), 'S999')
+    await user.type(screen.getByLabelText(/^amount \(ksh\)$/i), '5')
+    await user.click(screen.getByRole('button', { name: /assess this fine/i }))
+
+    // Same sentence as the ledger would refuse with: a fine on nobody is a
+    // book-keeping lie, and the screen does not invent a student to charge.
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('No student on file with that number.')
+  })
+
+  test('an assistant cannot assess a fine, and is told in words', async () => {
+    const { user } = await mountSignedIn('/fines', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+      })
+      await api.appointUser({
+        email: 'desk@dandorasecondary.go.ke',
+        name: 'Pendo Wanjiru',
+        password: 'x',
+        role: 'assistant',
+      })
+      await api.signOut()
+      await api.signIn('desk@dandorasecondary.go.ke', 'x')
+    })
+    await screen.findByText(/nobody owes anything/i)
+
+    await user.click(screen.getByRole('button', { name: /assess a fine/i }))
+    await user.type(screen.getByLabelText(/admission number/i), 'S001')
+    await user.type(screen.getByLabelText(/^amount \(ksh\)$/i), '1')
+    await user.click(screen.getByRole('button', { name: /assess this fine/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your role (assistant) cannot fines write.')
+    // The charge did not go anywhere: the desk reads fines but cannot write them.
+    expect(screen.queryByText(/assessed ksh/i)).not.toBeInTheDocument()
+  })
+
   test('a suspended student can be allowed back, without an administrator', async () => {
     const { user } = await mountSignedIn('/students', async () => {
       await api.createMember({

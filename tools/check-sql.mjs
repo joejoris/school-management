@@ -28,7 +28,7 @@ import { readFileSync } from 'node:fs'
  * otherwise. See the list at the bottom.
  */
 
-const files = ['0001_library_schema.sql', '0002_circulation.sql', '0003_rls_and_seed.sql', '0004_staff.sql', '0005_close_functions_to_public.sql', '0007_hold_expiry.sql', '0008_dashboard.sql']
+const files = ['0001_library_schema.sql', '0002_circulation.sql', '0003_rls_and_seed.sql', '0004_staff.sql', '0005_close_functions_to_public.sql', '0007_hold_expiry.sql', '0008_dashboard.sql', '0009_assess_fine.sql']
 const root = 'supabase/migrations/'
 
 /**

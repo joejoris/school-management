@@ -1120,19 +1120,22 @@ export class SupabaseApi implements LibraryApi {
   }
 
   async assessFine(input: AssessFineInput): Promise<import('@library/contracts').FineDetail> {
-    // Assessed as a charge in the ledger rather than by writing the fine directly:
-    // fine_txns has no insert grant for anybody, so this has to be a function.
-    const fine = await this.rest<import('@library/contracts').Fine>('fines', {
-      method: 'POST',
-      body: {
-        member_id: input.memberId,
-        kind: input.kind,
-        assessed_amount: input.amountCents,
-        note: input.note ?? null,
-      },
+    // The ledger charge goes through a function, not a raw insert: since 0001
+    // there has been no INSERT grant on `fines`, and `fine_txns` has no insert
+    // grant for anybody. The function checks `fines.write`, writes the fine and
+    // the charge together, and recomputes the balance from the ledger — the
+    // same door a checkout is. (An earlier version of this method POSTed to
+    // `fines` directly; 0003's revoke refuses that.)
+    const res = await this.rpc<{ ok: boolean; fineId?: string; message?: string }>('assess_fine', {
+      p_member_id: input.memberId,
+      p_kind: input.kind,
+      p_amount: input.amountCents,
+      p_note: input.note ?? null,
     })
-    const ledger = await this.getFineLedger(fine.memberId)
-    return ledger.find((f) => f.id === fine.id)!
+    if (!res.ok) throw new SupabaseRefusal('request_failed', res.message ?? 'That fine could not be assessed.')
+    const found = (await this.getFineLedger(input.memberId)).find((f) => f.id === res.fineId)
+    if (!found) throw new SupabaseRefusal('not_found', 'That fine could not be found.')
+    return found
   }
 
   /**

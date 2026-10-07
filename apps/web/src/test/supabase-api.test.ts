@@ -800,3 +800,71 @@ describe('the dashboard', () => {
     }
   })
 })
+
+describe('assessing a fine by hand', () => {
+  test('is a charge through a function, and the row is re-read from the ledger', async () => {
+    const s = stub([
+      { json: { ok: true, fine_id: 'f_1', assessed: 250 } },
+      {
+        json: [
+          {
+            id: 'f_1',
+            member_id: 'm_2',
+            kind: 'damage',
+            assessed_amount: 250,
+            balance: 250,
+            status: 'outstanding',
+            note: 'Cover torn',
+          },
+        ],
+      },
+      { json: [{ id: 'ft_1', fine_id: 'f_1', kind: 'charge', amount: 250 }] },
+      { json: [{ id: 'm_2', member_code: 'S001', first_name: 'Kept', last_name: 'Student' }] },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const fine = await api.assessFine({
+        memberId: 'm_2',
+        kind: 'damage',
+        amountCents: 250,
+        note: 'Cover torn',
+      })
+
+      expect(s.calls[0]!.url).toContain('/rest/v1/rpc/assess_fine')
+      expect(s.calls[0]!.method).toBe('POST')
+      expect(s.calls[0]!.body).toMatchObject({
+        p_member_id: 'm_2',
+        p_kind: 'damage',
+        p_amount: 250,
+        p_note: 'Cover torn',
+      })
+
+      expect(fine).toMatchObject({
+        id: 'f_1',
+        kind: 'damage',
+        balance: 250,
+        status: 'outstanding',
+        memberCode: 'S001',
+        memberName: 'Kept Student',
+      })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('a refused function keeps its sentence', async () => {
+    const s = stub([{ json: { ok: false, message: 'Your role cannot assess fines.' } }])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      await expect(
+        api.assessFine({ memberId: 'm_2', kind: 'other', amountCents: 100 }),
+      ).rejects.toThrow(/your role cannot assess fines/i)
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})

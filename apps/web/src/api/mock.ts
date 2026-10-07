@@ -1193,6 +1193,12 @@ export class MockApi implements LibraryApi {
 
   async assessFine(input: AssessFineInput): Promise<FineDetail> {
     this.need('fines.write')
+    // The live assess_fine refuses a member nobody can find; the screen
+    // resolves the admission number first, but a student deleted between the
+    // lookup and the assessment would otherwise be charged to thin air.
+    if (!this.db.members.some((m) => m.id === input.memberId)) {
+      throw new DomainRefusalError('No student on file with that number.')
+    }
     const now = this.now()
     const fine: Fine = {
       id: `f_${this.db.fines.length + 1}`,
@@ -1210,6 +1216,13 @@ export class MockApi implements LibraryApi {
     }
     this.db.fines.push(fine)
     this.addTxn(fine.id, 'charge', input.amountCents)
+    // The charge just assessed is the whole fine: the ledger total equals what
+    // was assessed, so the fine is outstanding — not, as `addTxn`'s payment
+    // logic would label it, already half paid.
+    fine.status = 'outstanding'
+    this.auditWrite('assess', 'fine', fine.id, {
+      after: { member_id: input.memberId, amount: input.amountCents, kind: input.kind, note: input.note ?? null },
+    })
     return this.detailFor(fine)
   }
 

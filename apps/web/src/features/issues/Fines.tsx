@@ -23,18 +23,33 @@
  * librarian who presses it twice in a row can see the second press do nothing —
  * which is the behaviour, and worth demonstrating rather than hiding.
  */
-import { useState } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Link } from '@tanstack/react-router'
+import { type AssessFineInput, type FineKind } from '@library/contracts'
 import { api } from '../../api'
-import { Button, Card, cn } from '../../components/ui'
+import { Button, Card, cn, Field, Input } from '../../components/ui'
 import { TriangleAlert } from '../../components/icons'
 
 const money = (cents: number) => (cents / 100).toFixed(2)
 
+/**
+ * The reasons a fine can be assessed by hand. Overdue is deliberately not one:
+ * that is what the accrual button is for, and an overdue fine needs the loan
+ * it came from. A hand-assessed fine has no loan.
+ */
+const KINDS: readonly FineKind[] = ['lost', 'damage', 'other']
+
 export function Fines() {
   const queryClient = useQueryClient()
   const [result, setResult] = useState<string | null>(null)
+
+  const [assessOpen, setAssessOpen] = useState(false)
+  const [code, setCode] = useState('')
+  const [amount, setAmount] = useState('')
+  const [kind, setKind] = useState<FineKind>('other')
+  const [note, setNote] = useState('')
+  const [formError, setFormError] = useState<string | null>(null)
 
   const outstanding = useQuery({
     queryKey: ['fines-all'],
@@ -58,6 +73,53 @@ export function Fines() {
     },
   })
 
+  const assess = useMutation({
+    mutationFn: (input: AssessFineInput) => api.assessFine(input),
+    onSuccess: async (fine) => {
+      // The exact same re-read a payment or a waiver gets: row and balance come
+      // from the backend, not from what this form typed.
+      setResult(
+        `Assessed KSh ${money(fine.assessedAmount)} for ${fine.memberCode} — ${fine.memberName}.`,
+      )
+      setCode('')
+      setAmount('')
+      setKind('other')
+      setNote('')
+      setAssessOpen(false)
+      await queryClient.invalidateQueries({ queryKey: ['fines'] })
+      await queryClient.invalidateQueries({ queryKey: ['fines-all'] })
+    },
+  })
+
+  const submitAssess = async (e: FormEvent) => {
+    e.preventDefault()
+    setResult(null)
+    setFormError(null)
+    const cents = Math.round(Number.parseFloat(amount) * 100)
+    if (!Number.isFinite(cents) || cents <= 0) {
+      setFormError('The amount must be a number of shillings, more than zero.')
+      return
+    }
+    // The domain charges the member, not the number typed. Resolution first,
+    // in a sentence either way: there is no "unknown admission number" for a
+    // fine, because a fine on nobody is a book-keeping lie.
+    const member = await api.findMemberByCode(code.trim())
+    if (!member) {
+      setFormError('No student on file with that number.')
+      return
+    }
+    try {
+      await assess.mutateAsync({
+        memberId: member.id,
+        kind,
+        amountCents: cents,
+        note: note.trim() || undefined,
+      })
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'That fine could not be assessed.')
+    }
+  }
+
   const owing = (outstanding.data?.items ?? []).filter((f) => f.balance > 0)
   const total = owing.reduce((sum, f) => sum + f.balance, 0)
 
@@ -79,15 +141,106 @@ export function Fines() {
           </p>
         </div>
 
-        <Button
-          type="button"
-          variant="outline"
-          disabled={accrue.isPending}
-          onClick={() => accrue.mutate()}
-        >
-          {accrue.isPending ? 'Charging…' : 'Charge overdue fines'}
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            disabled={accrue.isPending}
+            onClick={() => accrue.mutate()}
+          >
+            {accrue.isPending ? 'Charging…' : 'Charge overdue fines'}
+          </Button>
+          <Button type="button" variant="outline" onClick={() => setAssessOpen((o) => !o)}>
+            {assessOpen ? 'Close the form' : 'Assess a fine'}
+          </Button>
+        </div>
       </header>
+
+      {assessOpen ? (
+        <Card className="p-4">
+          <form onSubmit={submitAssess} className="grid gap-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="Admission number"
+                htmlFor="assess-code"
+                hint="As written on their card, including any leading zero."
+              >
+                <Input
+                  id="assess-code"
+                  value={code}
+                  onChange={(e) => setCode(e.target.value)}
+                  className="uppercase"
+                  autoComplete="off"
+                  required
+                />
+              </Field>
+              <Field
+                label="Amount (KSh)"
+                htmlFor="assess-amount"
+                hint="A whole number of shillings or halves, like 50 or 2.50."
+              >
+                <Input
+                  id="assess-amount"
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="0.01"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  required
+                />
+              </Field>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-2">
+              <Field
+                label="Reason"
+                htmlFor="assess-kind"
+                hint="A lost or damaged book, or anything else the desk decides."
+              >
+                <select
+                  id="assess-kind"
+                  value={kind}
+                  onChange={(e) => setKind(e.target.value as FineKind)}
+                  className="h-11 w-full rounded-lg border border-input bg-card px-3 text-base"
+                >
+                  {KINDS.map((k) => (
+                    <option key={k} value={k}>
+                      {k.charAt(0).toUpperCase() + k.slice(1)}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Note" htmlFor="assess-note" hint="Optional. What it was for.">
+                <Input
+                  id="assess-note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  autoComplete="off"
+                />
+              </Field>
+            </div>
+
+            {formError ? (
+              <p
+                role="alert"
+                className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+              >
+                {formError}
+              </p>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              <Button type="submit" disabled={assess.isPending}>
+                {assess.isPending ? 'Assessing…' : 'Assess this fine'}
+              </Button>
+              <Button type="button" variant="ghost" onClick={() => setAssessOpen(false)}>
+                Cancel
+              </Button>
+            </div>
+          </form>
+        </Card>
+      ) : null}
 
       {result ? (
         <p
