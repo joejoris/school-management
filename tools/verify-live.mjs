@@ -203,6 +203,13 @@ function no(what, why) {
 async function expectOk(label, fn) {
   try {
     const value = await fn()
+    // A call that did not throw is not the same as a call that worked. With no
+    // session, currentUser() comes back null without throwing, and this said
+    // "found the profile" about nothing. Every caller here wants a row or a page.
+    if (value === null || value === undefined) {
+      no(label, 'came back empty')
+      return value
+    }
     ok(label)
     return value
   } catch (e) {
@@ -324,7 +331,7 @@ if (want('auth')) {
   const already = exists.body === true
   console.log(`      has_any_accounts() = ${already}  ${already ? '(an account already exists — using it)' : ''}`)
 
-  const up = await auth.signUp(`probe-${RUN}@example.invalid`, PASSWORD)
+  const up = await auth.signUp(`probe-${RUN}@example.com`, PASSWORD)
   if (up.error) {
     console.log(`      sign-up: ${up.error}`)
   } else if (!up.session) {
@@ -332,7 +339,7 @@ if (want('auth')) {
   } else if (!already) {
     // Only the first account can be made this way; afterwards set_up_library refuses, and
     // that refusal is itself worth seeing.
-    const r = await rpc('set_up_library', { p_user_id: realUserId ?? up.id, p_email: `probe-${RUN}@example.invalid`, p_name: 'Probe Librarian' })
+    const r = await rpc('set_up_library', { p_user_id: realUserId ?? up.id, p_email: `probe-${RUN}@example.com`, p_name: 'Probe Librarian' })
     if (r.body?.ok) ok(`set_up_library created the administrator (${String(r.body.id).slice(0, 8)}…)`)
     else no('set_up_library', JSON.stringify(r.body).slice(0, 100))
   }
