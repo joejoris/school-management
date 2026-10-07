@@ -39,7 +39,7 @@ import type {
   TitleSummary,
   User,
 } from './entities.ts'
-import type { CopyCondition, CopyStatus, MemberStatus, Role, UserStatus } from './enums.ts'
+import type { CopyCondition, CopyStatus, MemberStatus, ReportId, Role, UserStatus } from './enums.ts'
 import type { BackupResult, CheckoutResult, PaymentResult, RenewResult, ReturnResult, VoidResult } from './refusals.ts'
 import type { Page, PageQuery } from './page.ts'
 
@@ -392,7 +392,17 @@ export interface LibraryApi {
 
   // ── Ops ────────────────────────────────────────────────────
   getDashboard(): Promise<DashboardSummary>
-  runReport(id: string, params?: Record<string, string>): Promise<ReportResult>
+
+  /**
+   * A named slice of the register, flattened to the columns a spreadsheet wants.
+   *
+   * Admin-only (`reports.run`), like the dashboard it sits beside: a report is
+   * the whole library summarised, which is the head's answer to "how are we
+   * doing", not the desk's. The rows are computed by one function on the
+   * backend so the numbers carry the same permission and the same eyes as the
+   * rest of the domain.
+   */
+  runReport(id: ReportId): Promise<ReportResult>
   startImport(input: ImportStartInput): Promise<ImportJob>
   getImportJob(id: string): Promise<ImportJob>
   listImportRowErrors(jobId: string): Promise<ImportRowError[]>

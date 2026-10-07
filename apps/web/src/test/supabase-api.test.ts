@@ -868,3 +868,48 @@ describe('assessing a fine by hand', () => {
     }
   })
 })
+
+describe('reports against the live database', () => {
+  test('run through one function, and the report comes back ready to export', async () => {
+    const s = stub([
+      {
+        json: {
+          ok: true,
+          columns: ['Admission no.', 'Student', 'Balance'],
+          rows: [['S001', 'Kept Student', '50.00']],
+          generated_at: '2026-10-06T08:00:00.000Z',
+        },
+      },
+    ])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      const report = await api.runReport('owing')
+
+      expect(s.calls[0]!.url).toContain('/rest/v1/rpc/run_report')
+      expect(s.calls[0]!.method).toBe('POST')
+      expect(s.calls[0]!.body).toMatchObject({ p_report: 'owing' })
+
+      expect(report).toEqual({
+        columns: ['Admission no.', 'Student', 'Balance'],
+        rows: [['S001', 'Kept Student', '50.00']],
+        generatedAt: '2026-10-06T08:00:00.000Z',
+      })
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+
+  test('a refused report keeps its sentence', async () => {
+    const s = stub([{ json: { ok: false, message: 'Your role cannot run the reports.' } }])
+    const api = makeApi(null)
+    const real = globalThis.fetch
+    globalThis.fetch = s.impl as never
+    try {
+      await expect(api.runReport('register')).rejects.toThrow(/your role cannot run the reports/i)
+    } finally {
+      globalThis.fetch = real
+    }
+  })
+})

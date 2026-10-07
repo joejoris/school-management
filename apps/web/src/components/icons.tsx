@@ -56,6 +56,17 @@ export function ChartBars({ className, ...p }: IconProps) {
   )
 }
 
+/** A download: an arrow down into a tray. For the reports rail entry. */
+export function Download({ className, ...p }: IconProps) {
+  return (
+    <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>
+      <path d="M12 3v11" />
+      <path d="m7 9 5 5 5-5" />
+      <path d="M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+    </svg>
+  )
+}
+
 export function Library({ className, ...p }: IconProps) {
   return (
     <svg {...base} {...p} className={className ?? 'size-5'} aria-hidden>

@@ -98,6 +98,17 @@ export type FineTxnKind = (typeof FineTxnKind)[number]
 export const HoldStatus = ['open', 'filled', 'expired', 'cancelled', 'collected'] as const
 export type HoldStatus = (typeof HoldStatus)[number]
 
+/**
+ * The reports an administrator can pull.
+ *
+ * Each is a named slice of the register — the same data the screens show,
+ * flattened to the columns a spreadsheet wants. Overdue is the accrual's
+ * argument set out as a list; overflow is deliberately not a report because
+ * "out of stock" is a per-title answer, not a library-wide one.
+ */
+export const ReportId = ['overdue', 'register', 'owing', 'catalogue'] as const
+export type ReportId = (typeof ReportId)[number]
+
 export const ImportKind = ['students', 'stock', 'loans'] as const
 export type ImportKind = (typeof ImportKind)[number]
 

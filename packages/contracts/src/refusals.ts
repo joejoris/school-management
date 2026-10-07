@@ -161,6 +161,17 @@ export type PaymentResult =
 export const BackupRefusal = ['malformed', 'restore_refused', 'forbidden'] as const
 export type BackupRefusal = (typeof BackupRefusal)[number]
 
+/**
+ * Reasons running a report can fail.
+ *
+ * A report is a named slice of the register, gated on `reports.run` the same
+ * way the dashboard is. `unknown_report` is the report somebody typed that this
+ * library does not offer — an old link or an old build pointing at a report a
+ * newer one renamed — and it is a sentence, not a crash.
+ */
+export const ReportRefusal = ['forbidden', 'unknown_report'] as const
+export type ReportRefusal = (typeof ReportRefusal)[number]
+
 export type BackupResult =
   | {
       ok: true
@@ -186,13 +197,15 @@ export type ReturnResult =
  * developer reading a log.
  */
 export const REFUSAL_MESSAGES: Record<
-  CheckoutRefusal | RenewRefusal | ReturnRefusal | VoidRefusal | PaymentRefusal | AdminRefusal | BackupRefusal,
+  CheckoutRefusal | RenewRefusal | ReturnRefusal | VoidRefusal | PaymentRefusal | AdminRefusal | BackupRefusal | ReportRefusal,
   string
 > = {
   // backup
   malformed: 'That file is not a library backup.',
   restore_refused:
     'The school’s system never rewrites the register from a browser. This file is a copy to keep, not something to put back.',
+  // reports
+  unknown_report: 'That report is not one this library offers.',
   // checkout
   member_not_found: 'No student on file with that number.',
   member_suspended: 'That student is not active.',

@@ -1225,16 +1225,24 @@ export class SupabaseApi implements LibraryApi {
     }
   }
 
-  async runReport(id: string, params?: Record<string, string>): Promise<import('@library/contracts').ReportResult> {
-    // Every report is the register filtered. Rather than fake a reports engine, this
-    // says what it did.
-    const rows = await this.listLoans({ limit: 200, offset: 0, ...(params as object) })
+  async runReport(id: import('@library/contracts').ReportId): Promise<import('@library/contracts').ReportResult> {
+    // One function computes the rows with the reports.run gate — the client
+    // assembling them from raw reads would quietly let the desk run the head's
+    // report. The rpc camelizes the body, so the function's generated_at
+    // arrives as generatedAt.
+    const res = await this.rpc<{
+      ok: boolean
+      columns?: string[]
+      rows?: string[][]
+      generatedAt?: string
+      message?: string
+    }>('run_report', { p_report: id })
+    if (!res.ok) throw new SupabaseRefusal('request_failed', res.message ?? 'That report could not be run.')
     return {
-      columns: ['Admission no.', 'Student', 'Title', 'Book no.', 'Taken', 'Due'],
-      rows: rows.items.map((r) => [r.memberCode, r.studentName, r.title, r.barcode, r.checkedOutAt, r.dueAt]),
-      generatedAt: new Date().toISOString(),
+      columns: res.columns ?? [],
+      rows: res.rows ?? [],
+      generatedAt: res.generatedAt ?? new Date().toISOString(),
     }
-    void id
   }
 
   async startImport(input: ImportStartInput): Promise<ImportJob> {

@@ -52,6 +52,7 @@ import type {
   ImportRowError,
   AuditEntry,
   Notification,
+  ReportId,
   ReportResult,
   Role,
   ShelfLocation,
@@ -1368,21 +1369,83 @@ export class MockApi implements LibraryApi {
     }
   }
 
-  async runReport(_reportId: string, _params?: Record<string, string>): Promise<ReportResult> {
+  async runReport(id: ReportId): Promise<ReportResult> {
     this.need('reports.run')
-    const summary = await this.getDashboard()
-    return {
-      columns: ['Titles', 'Copies', 'On loan', 'Overdue', 'Fines (cents)'],
-      rows: [
-        [
-          String(summary.totalTitles),
-          String(summary.totalCopies),
-          String(summary.onLoan),
-          String(summary.overdue),
-          String(summary.outstandingFines),
-        ],
-      ],
-      generatedAt: this.now(),
+    const generatedAt = this.now()
+    const rowFor = (l: Loan) => {
+      const member = this.db.members.find((m) => m.id === l.memberId)
+      const copy = this.db.copies.find((c) => c.id === l.copyId)
+      const title = copy ? this.db.titles.find((t) => t.id === copy.titleId) : undefined
+      return [
+        member?.memberCode ?? '',
+        member ? `${member.firstName} ${member.lastName}` : '',
+        title?.title ?? '',
+        copy?.barcode ?? '',
+        l.checkedOutAt.slice(0, 10),
+        l.dueAt.slice(0, 10),
+      ]
+    }
+    const money = (cents: number) => (cents / 100).toFixed(2)
+
+    // The same four slices as run_report() on the live backend, in the same
+    // order a reader asks — earliest due first, biggest balance first, title.
+    switch (id) {
+      case 'overdue': {
+        const now = Date.parse(generatedAt)
+        return {
+          columns: ['Admission no.', 'Student', 'Title', 'Book no.', 'Taken', 'Due'],
+          rows: this.db.loans
+            .filter((l) => l.status === 'active' && Date.parse(l.dueAt) < now)
+            .sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+            .map(rowFor),
+          generatedAt,
+        }
+      }
+      case 'register':
+        return {
+          columns: ['Admission no.', 'Student', 'Title', 'Book no.', 'Taken', 'Due'],
+          rows: this.db.loans
+            .filter((l) => l.status === 'active')
+            .sort((a, b) => a.dueAt.localeCompare(b.dueAt))
+            .map(rowFor),
+          generatedAt,
+        }
+      case 'owing':
+        return {
+          columns: ['Admission no.', 'Student', 'Reason', 'Balance', 'Status', 'Note'],
+          rows: this.db.fines
+            .filter((f) => f.balance > 0)
+            .sort((a, b) => b.balance - a.balance)
+            .map((f) => {
+              const member = this.db.members.find((m) => m.id === f.memberId)
+              return [
+                member?.memberCode ?? '',
+                member ? `${member.firstName} ${member.lastName}` : '',
+                f.kind,
+                money(f.balance),
+                f.status,
+                f.note ?? '',
+              ]
+            }),
+          generatedAt,
+        }
+      case 'catalogue':
+        return {
+          columns: ['Call no.', 'Title', 'Author', 'Copies', 'On shelf'],
+          rows: [...this.db.titles]
+            .sort((a, b) => a.title.localeCompare(b.title))
+            .map((t) => {
+              const copies = this.db.copies.filter((c) => c.titleId === t.id)
+              return [
+                t.callNumber ?? '',
+                t.title,
+                t.author,
+                String(copies.length),
+                String(copies.filter((c) => c.status === 'on_shelf').length),
+              ]
+            }),
+          generatedAt,
+        }
     }
   }
 

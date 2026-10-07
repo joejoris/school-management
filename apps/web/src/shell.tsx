@@ -25,6 +25,8 @@ import { cn } from './components/ui'
 import {
   Archive,
   BookPlus,
+  ChartBars,
+  Download,
   Library,
   LogOut,
   PanelLeft,
@@ -34,7 +36,6 @@ import {
   ScrollText,
   Upload,
   Users,
-  ChartBars,
 } from './components/icons'
 
 const LINKS = [
@@ -49,6 +50,7 @@ const LINKS = [
   { to: '/import', label: 'Import', icon: Upload, end: false },
   { to: '/backup', label: 'Backup', icon: Archive, end: false },
   { to: '/dashboard', label: 'Dashboard', icon: ChartBars, end: false },
+  { to: '/reports', label: 'Reports', icon: Download, end: false },
   { to: '/audit', label: 'Audit', icon: ScrollText, end: false },
 ] as const
 

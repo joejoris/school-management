@@ -163,7 +163,7 @@ describe('the landing screen', () => {
   test('every destination in the rail exists', async () => {
     await mountSignedIn('/')
     const rail = await screen.findByRole('navigation', { name: /main/i })
-    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Dashboard', 'Audit']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Dashboard', 'Reports', 'Audit']) {
       const link = within(rail).getByRole('link', { name: new RegExp(label, 'i') })
       expect(link).toHaveAttribute('href', expect.stringMatching(/^\//))
     }
@@ -428,7 +428,7 @@ describe('the sidebar belongs to a session, not to the page', () => {
 
     expect(screen.queryByRole('navigation')).not.toBeInTheDocument()
     // Every one of those links would have been a dead end.
-    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Dashboard', 'Audit']) {
+    for (const label of ['Record issue', 'Catalogue', 'Import', 'Backup', 'Dashboard', 'Reports', 'Audit']) {
       expect(screen.queryByRole('link', { name: new RegExp(label, 'i') })).not.toBeInTheDocument()
     }
   })
@@ -2150,6 +2150,91 @@ describe('dashboard', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('Your role (assistant) cannot reports run.')
     expect(screen.queryByText('Titles')).not.toBeInTheDocument()
+  })
+})
+
+/*
+ * Reports.
+ *
+ * The head of the library pulls a named slice of the register as a CSV. The
+ * gate is `reports.run` on the backend — which means the mock's need() is the
+ * same decision — so an assistant who presses the button is refused in words
+ * rather than handed the file. The download itself is the same seam as the
+ * backup, so this asserts what the screen gets out of it: a real Blob with
+ * the report's columns and rows, ready for a spreadsheet.
+ */
+describe('reports', () => {
+  test('an administrator gets a CSV of the report, with the data in it', async () => {
+    const { user } = await mountSignedIn('/reports', async () => {
+      await api.createMember({
+        memberCode: 'S001',
+        firstName: 'Kept',
+        lastName: 'Student',
+        type: 'student',
+      })
+      // A fine assessed by hand, so the "who owes" report has a row worth reading.
+      const member = await api.findMemberByCode('S001')
+      if (!member) throw new Error('arrangement failed')
+      await api.assessFine({ memberId: member.id, kind: 'damage', amountCents: 250, note: 'Cover torn' })
+    })
+    await screen.findByRole('heading', { name: /^reports$/i })
+
+    let saved: Blob | null = null
+    const realCreate = URL.createObjectURL
+    URL.createObjectURL = ((blob: Blob) => {
+      saved = blob
+      return 'blob:test'
+    }) as typeof URL.createObjectURL
+    try {
+      const card = screen.getByText(/who owes/i).closest('li')
+      if (!card) throw new Error('who owes card not found')
+      await user.click(within(card).getByRole('button', { name: /download csv/i }))
+    } finally {
+      URL.createObjectURL = realCreate
+    }
+
+    expect(saved).toBeTruthy()
+    // The byte-order mark is what tells Excel the shillings are UTF-8. It is a
+    // property of the *file's bytes* — the double-clicked file, not the decoded
+    // text — so it is asserted on the bytes, the way Excel would meet them.
+    // (Blob.prototype.text is polyfilled in setup via jsdom's FileReader, which
+    // is exactly the seam used here for the raw bytes.)
+    const bytes = await new Promise<Uint8Array>((resolve, reject) => {
+      const reader = new FileReader()
+      reader.onload = () => resolve(new Uint8Array(reader.result as ArrayBuffer))
+      reader.onerror = () => reject(reader.error)
+      reader.readAsArrayBuffer(saved as Blob)
+    })
+    expect([bytes[0], bytes[1], bytes[2]]).toEqual([0xef, 0xbb, 0xbf])
+
+    const text = await (saved as unknown as Blob).text()
+    expect(text).toContain('Admission no.,Student,Reason,Balance,Status,Note')
+    expect(text).toContain('S001,Kept Student,damage,2.50,outstanding,Cover torn')
+
+    expect(await screen.findByRole('status')).toHaveTextContent(/saved who owes to your downloads/i)
+  })
+
+  test('an assistant is refused, in words, and no file is produced', async () => {
+    const { user } = await mountSignedIn('/reports', async () => {
+      await api.appointUser({
+        email: 'desk@dandorasecondary.go.ke',
+        name: 'Pendo Wanjiru',
+        password: 'x',
+        role: 'assistant',
+      })
+      await api.signOut()
+      await api.signIn('desk@dandorasecondary.go.ke', 'x')
+    })
+    await screen.findByRole('heading', { name: /^reports$/i })
+
+    const card = await screen.findByText(/all loans out/i)
+    const listItem = card.closest('li')
+    if (!listItem) throw new Error('report card not found')
+    await user.click(within(listItem).getByRole('button', { name: /download csv/i }))
+
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('Your role (assistant) cannot reports run.')
+    expect(screen.queryByRole('status')).not.toBeInTheDocument()
   })
 })
 
