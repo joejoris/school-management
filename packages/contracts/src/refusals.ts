@@ -69,7 +69,6 @@ export type RenewResult =
 export const CheckoutRefusal = [
   'member_not_found',
   'member_suspended',
-  'copy_not_found',
   'copy_on_loan',
   'copy_unavailable',
   'copy_reserved',
@@ -209,7 +208,6 @@ export const REFUSAL_MESSAGES: Record<
   // checkout
   member_not_found: 'No student on file with that number.',
   member_suspended: 'That student is not active.',
-  copy_not_found: 'No book on file with that number.',
   copy_on_loan: 'That book is already out.',
   copy_unavailable: 'That book is not on the shelf.',
   copy_reserved: 'That book is being held for another student. Let the queue serve them first.',

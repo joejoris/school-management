@@ -477,9 +477,6 @@ as $$
     select 'member_not_found'::text, 'No student on file with that number.'::text, false::boolean
     where not exists (select 1 from m)
     union all
-    select 'copy_not_found', 'No book on file with that number.', false
-    where not exists (select 1 from c)
-    union all
     select 'member_suspended', 'That student is not active.', false
     where exists (select 1 from m) and (select status from m) <> 'active'
     union all

@@ -381,7 +381,7 @@ if (want('circulation')) {
 
     // The refusals, against the real database rather than a mock.
     group('and the things the domain refuses')
-    await expectRefusal('issuing a book that does not exist', 'copy_not_found', () =>
+    await expectRefusal('issuing a book that does not exist', 'copy_unavailable', () =>
       api.checkout({ memberCode: CODE, barcode: 'BK-NOT-REAL' }),
     )
     await expectRefusal('issuing to a student who does not exist', 'member_not_found', () =>

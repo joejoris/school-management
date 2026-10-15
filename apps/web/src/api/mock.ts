@@ -532,7 +532,7 @@ export class MockApi implements LibraryApi {
     if (!member) return this.refuse('member_not_found')
 
     const copy = this.db.copies.find((c) => c.barcode === input.barcode)
-    if (!copy) return this.refuse('copy_not_found')
+    if (!copy) return this.refuse('copy_unavailable')
 
     const type = this.typeFor(member.type)
 

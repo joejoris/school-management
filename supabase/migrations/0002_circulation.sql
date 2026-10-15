@@ -69,8 +69,8 @@ begin
       'message', 'No student on file with that number.', 'overridable', false);
   end if;
   if v_copy.id is null then
-    return jsonb_build_object('ok', false, 'code', 'copy_not_found',
-      'message', 'No book on file with that number.', 'overridable', false);
+    return jsonb_build_object('ok', false, 'code', 'copy_unavailable',
+      'message', 'That book is not on the shelf.', 'overridable', false);
   end if;
 
   select * into v_type from member_types where key = v_member.type;
