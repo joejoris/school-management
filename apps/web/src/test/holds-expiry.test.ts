@@ -49,7 +49,7 @@ async function student(api: MockApi, code: string, firstName: string) {
 }
 
 async function titleWith(api: MockApi, title: string, copyCount = 1) {
-  const created = await api.createTitle({ title, author: 'A. Author', copyCount })
+  const created = await api.createTitle({ title, copyCount })
   const detail = await api.getTitle(created.id)
   return { id: created.id, copies: detail.copies }
 }

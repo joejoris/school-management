@@ -90,7 +90,7 @@ export function Catalogue() {
               id="catalogue-search"
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Title, author, ISBN or shelf number"
+              placeholder="Title, ISBN or shelf number"
               className="pl-9"
             />
           </div>
@@ -150,7 +150,7 @@ function EmptyCatalogue({ searching }: { searching: boolean }) {
       </p>
       <p className="mx-auto mt-1 max-w-sm text-sm text-muted-foreground">
         {searching
-          ? 'Search covers the title, the author, the ISBN and the shelf number.'
+          ? 'Search covers the title, the ISBN and the shelf number.'
           : 'Add a title above to get started. You will need at least one copy before a book can be issued.'}
       </p>
     </div>
@@ -193,8 +193,7 @@ function TitleRow({
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{title.title}</p>
           <p className="truncate text-sm text-muted-foreground">
-            {title.author}
-            {title.callNumber ? ` · ${title.callNumber}` : ''}
+            {title.callNumber ? title.callNumber : ''}
           </p>
         </div>
 
@@ -304,7 +303,6 @@ function isWholeNumber(v: string): boolean {
 function detailsFrom(t: TitleDetail) {
   return {
     title: t.title,
-    author: t.author,
     isbn: t.isbn ?? '',
     publisher: t.publisher ?? '',
     publishedYear: t.publishedYear?.toString() ?? '',
@@ -327,7 +325,7 @@ function yearOrNull(v: string): number | null {
  * Correcting a title's own details.
  *
  * A title's metadata is what a search finds and what a shelf label prints, so
- * getting it right matters and getting it wrong is ordinary: an author spelled
+ * getting it right matters and getting it wrong is ordinary: an ISBN added
  * wrong at cataloguing, an ISBN added a term later, a shelf number that moved.
  *
  * The copies are not here. A copy is the thing with a barcode — added, marked
@@ -350,7 +348,6 @@ function TitleDetails({ title }: { title: TitleDetail }) {
     mutationFn: () =>
       api.updateTitle(title.id, {
         title: form.title.trim(),
-        author: form.author.trim(),
         isbn: orNull(form.isbn),
         publisher: orNull(form.publisher),
         publishedYear: yearOrNull(form.publishedYear),
@@ -379,7 +376,6 @@ function TitleDetails({ title }: { title: TitleDetail }) {
 
   const canSave =
     form.title.trim().length > 0 &&
-    form.author.trim().length > 0 &&
     (form.publishedYear.trim().length === 0 || yearOrNull(form.publishedYear) !== null)
 
   const set = (k: keyof ReturnType<typeof detailsFrom>) => (e: ChangeEvent<HTMLInputElement>) =>
@@ -416,10 +412,6 @@ function TitleDetails({ title }: { title: TitleDetail }) {
           </Field>
 
           <div className="grid gap-3 sm:grid-cols-2">
-            <Field label="Author" htmlFor={`edit-author-${title.id}`}>
-              <Input id={`edit-author-${title.id}`} value={form.author} onChange={set('author')} />
-            </Field>
-
             <Field label="ISBN" htmlFor={`edit-isbn-${title.id}`} hint="Optional.">
               <Input
                 id={`edit-isbn-${title.id}`}
@@ -628,7 +620,6 @@ function WaitingList({ titleId }: { titleId: string }) {
 function AddTitle({ onAdded }: { onAdded: () => Promise<unknown> }) {
   const [open, setOpen] = useState(false)
   const [title, setTitle] = useState('')
-  const [author, setAuthor] = useState('')
   const [isbn, setIsbn] = useState('')
   const [copies, setCopies] = useState('1')
   const [error, setError] = useState<string | null>(null)
@@ -637,7 +628,6 @@ function AddTitle({ onAdded }: { onAdded: () => Promise<unknown> }) {
     mutationFn: () =>
       api.createTitle({
         title: title.trim(),
-        author: author.trim(),
         isbn: isbn.trim() || null,
         copyCount: Number(copies),
       }),
@@ -645,7 +635,6 @@ function AddTitle({ onAdded }: { onAdded: () => Promise<unknown> }) {
       // Cleared rather than kept: the next book is a different book, and a form
       // holding the last one's details invites the same title twice.
       setTitle('')
-      setAuthor('')
       setIsbn('')
       setCopies('1')
       setError(null)
@@ -655,7 +644,7 @@ function AddTitle({ onAdded }: { onAdded: () => Promise<unknown> }) {
     onError: (e: unknown) => setError(e instanceof Error ? e.message : 'Could not add that book.'),
   })
 
-  const canSubmit = title.trim().length > 0 && author.trim().length > 0 && isWholeNumber(copies)
+  const canSubmit = title.trim().length > 0 && isWholeNumber(copies)
 
   if (!open) {
     return (
@@ -690,15 +679,6 @@ function AddTitle({ onAdded }: { onAdded: () => Promise<unknown> }) {
         </Field>
 
         <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Author" htmlFor="new-author">
-            <Input
-              id="new-author"
-              value={author}
-              onChange={(e) => setAuthor(e.target.value)}
-              placeholder="Tim O’Brien"
-            />
-          </Field>
-
           <Field label="ISBN" htmlFor="new-isbn" hint="Optional.">
             <Input
               id="new-isbn"

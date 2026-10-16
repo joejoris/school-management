@@ -92,11 +92,10 @@ begin
        order by f.balance desc;
 
     when 'catalogue' then
-      v_cols := jsonb_build_array('Call no.'::text, 'Title'::text, 'Author'::text, 'Copies'::text, 'On shelf'::text);
+      v_cols := jsonb_build_array('Call no.'::text, 'Title'::text, 'Copies'::text, 'On shelf'::text);
       select coalesce(jsonb_agg(jsonb_build_array(
                coalesce(t.call_number, ''),
                t.title,
-               t.author,
                count(c.id)::text,
                count(c.id) filter (where c.status = 'on_shelf')::text)), '[]'::jsonb)
         into v_rows

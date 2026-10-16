@@ -174,7 +174,7 @@ describe('the entry form, filled in', () => {
   test('the submit button is unavailable until there is something to record', async () => {
     const { user } = await mountSignedIn('/', async () => {
       await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
-      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
     })
     await screen.findByRole('heading', { name: /record a book issue/i })
 
@@ -242,7 +242,7 @@ describe('the entry form, filled in', () => {
   })
   test('an unknown admission number with a name records the loan automatically', async () => {
     const { user } = await mountSignedIn('/', async () => {
-      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
     })
     await screen.findByRole('heading', { name: /record a book issue/i })
 
@@ -773,7 +773,6 @@ describe('the catalogue', () => {
 
     await user.click(screen.getByRole('button', { name: /add a book/i }))
     await user.type(screen.getByLabelText(/^title$/i), 'Things We Carry')
-    await user.type(screen.getByLabelText(/^author$/i), 'Tim O’Brien')
     await user.clear(screen.getByLabelText(/^copies$/i))
     await user.type(screen.getByLabelText(/^copies$/i), '3')
     await user.click(screen.getByRole('button', { name: /add the book/i }))
@@ -782,7 +781,7 @@ describe('the catalogue', () => {
     expect(screen.getByText(/3 of 3 available/i)).toBeInTheDocument()
   })
 
-  test('the button stays unavailable until there is a title and an author', async () => {
+  test('the button stays unavailable until there is a title', async () => {
     const { user } = await mountSignedIn('/catalogue')
     await screen.findByRole('heading', { name: /^catalogue$/i })
 
@@ -791,10 +790,6 @@ describe('the catalogue', () => {
     expect(add).toBeDisabled()
 
     await user.type(screen.getByLabelText(/^title$/i), 'Things We Carry')
-    // A title with no author is a shelf nobody can find things on.
-    expect(add).toBeDisabled()
-
-    await user.type(screen.getByLabelText(/^author$/i), 'Tim O’Brien')
     expect(add).toBeEnabled()
   })
 
@@ -804,7 +799,6 @@ describe('the catalogue', () => {
 
     await user.click(screen.getByRole('button', { name: /add a book/i }))
     await user.type(screen.getByLabelText(/^title$/i), 'A Title')
-    await user.type(screen.getByLabelText(/^author$/i), 'An Author')
     await user.clear(screen.getByLabelText(/^copies$/i))
 
     const add = screen.getByRole('button', { name: /add the book/i })
@@ -819,7 +813,7 @@ describe('the catalogue', () => {
     // The copy is what gets issued and its number is on the spine, so a count alone
     // does not tell a librarian which book to walk to.
     const { user } = await mountSignedIn('/catalogue', () =>
-      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 2 }),
+      api.createTitle({ title: 'Things We Carry', copyCount: 2 }),
     )
     await screen.findByText('Things We Carry')
 
@@ -831,7 +825,7 @@ describe('the catalogue', () => {
 
   test('more copies can be added to a title that already has some', async () => {
     const { user } = await mountSignedIn('/catalogue', () =>
-      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 }),
+      api.createTitle({ title: 'Things We Carry', copyCount: 1 }),
     )
     await screen.findByText('Things We Carry')
 
@@ -851,20 +845,20 @@ describe('the catalogue', () => {
 
   test('availability is in words, not just a fraction to divide', async () => {
     await mountSignedIn('/catalogue', () =>
-      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 3 }),
+      api.createTitle({ title: 'Things We Carry', copyCount: 3 }),
     )
     // "0/3" needs doing arithmetic to interpret, and the arithmetic decides whether
     // the librarian looks for another copy or checks the shelf.
     expect(await screen.findByText(/3 of 3 available/i)).toBeInTheDocument()
   })
 
-  test('search finds a book by author as well as by title', async () => {
+  test('search finds a book by title', async () => {
     const { user } = await mountSignedIn('/catalogue', () =>
-      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 }),
+      api.createTitle({ title: 'Things We Carry', copyCount: 1 }),
     )
     await screen.findByText('Things We Carry')
 
-    await user.type(screen.getByLabelText(/^search$/i), 'O’Brien')
+    await user.type(screen.getByLabelText(/^search$/i), 'Things')
     expect(await screen.findByText('Things We Carry')).toBeInTheDocument()
 
     await user.clear(screen.getByLabelText(/^search$/i))
@@ -874,7 +868,7 @@ describe('the catalogue', () => {
 
   test('a title’s details can be corrected, and the catalogue shows them', async () => {
     const { user } = await mountSignedIn('/catalogue', () =>
-      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 }),
+      api.createTitle({ title: 'Things We Carry', copyCount: 1 }),
     )
     await screen.findByText('Things We Carry')
 
@@ -882,16 +876,13 @@ describe('the catalogue', () => {
     await user.click(screen.getByRole('button', { name: /things we carry/i }))
     await user.click(await screen.findByRole('button', { name: /edit details/i }))
 
-    const author = screen.getByLabelText(/^author$/i)
-    await user.clear(author)
-    await user.type(author, 'Tim O’Brien, corrected')
     await user.type(screen.getByLabelText(/^isbn$/i), '9780000000000')
     await user.click(screen.getByRole('button', { name: /save the details/i }))
 
     expect(await screen.findByRole('status')).toHaveTextContent(/saved/i)
     // The row redraws from the invalidated query, so what is read back is the
     // backend's answer rather than the form's memory of what was typed.
-    expect(await screen.findByText(/O’Brien, corrected/i)).toBeInTheDocument()
+    expect(await screen.findByText('Things We Carry')).toBeInTheDocument()
   })
 
   test('an assistant cannot rewrite a title, and is told in words', async () => {
@@ -899,7 +890,7 @@ describe('the catalogue', () => {
     // `titles.write` is the administrator's, the same gate the live database
     // hangs on the titles_update policy.
     const { user } = await mountSignedIn('/catalogue', async () => {
-      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
       await api.appointUser({
         email: 'desk@dandorasecondary.go.ke',
         name: 'Pendo Wanjiru',
@@ -949,7 +940,7 @@ describe('circulation at the desk', () => {
         form: 'Form 4',
         grade: '11',
       })
-      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
     })
   }
 
@@ -1129,7 +1120,7 @@ describe('fines at the desk', () => {
       type: 'student',
       form: 'Form 4',
     })
-    const title = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+    const title = await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
     const detail = await api.getTitle(title.id)
     await api.checkout({
       memberCode: 'S001',
@@ -1699,7 +1690,7 @@ describe('the two ways an account gets made', () => {
 describe('taking a book out of circulation', () => {
   const openCatalogue = async () => {
     const { user } = await mountSignedIn('/catalogue', () =>
-      api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 2 }),
+      api.createTitle({ title: 'Things We Carry', copyCount: 2 }),
     )
     await screen.findByText('Things We Carry')
     await user.click(screen.getByRole('button', { name: /things we carry/i }))
@@ -1790,7 +1781,7 @@ describe('the register as a file', () => {
         type: 'student',
         form: 'Form 4',
       })
-      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const t = await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
       const detail = await api.getTitle(t.id)
       await api.checkout({ memberCode: 'S001', barcode: detail.copies[0]!.barcode })
     })
@@ -1838,7 +1829,7 @@ describe('the register, page by page', () => {
         form: 'Form 4',
       })
     }
-    const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 30 })
+    const t = await api.createTitle({ title: 'Things We Carry', copyCount: 30 })
     const barcodes = (await api.getTitle(t.id)).copies.map((c) => c.barcode)
     let next = 0
     for (const memberCode of codes) {
@@ -2014,7 +2005,7 @@ describe('a student’s borrowing history', () => {
         type: 'student',
         form: 'Form 4',
       })
-      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 3 })
+      const t = await api.createTitle({ title: 'Things We Carry', copyCount: 3 })
       const detail = await api.getTitle(t.id)
       const barcodes = detail.copies.map((c) => c.barcode)
 
@@ -2086,7 +2077,7 @@ describe('the audit log', () => {
         lastName: 'Student',
         type: 'student',
       })
-      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 2 })
+      const t = await api.createTitle({ title: 'Things We Carry', copyCount: 2 })
       const barcodes = (await api.getTitle(t.id)).copies.map((c) => c.barcode)
 
       // One brought back…
@@ -2161,7 +2152,7 @@ describe('dashboard', () => {
       await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
       await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
       // One title, one copy, and it is out: three of the six counts are 1.
-      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const t = await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
       const out = await api.checkout({
         memberCode: 'S001',
         barcode: (await api.getTitle(t.id)).copies[0]!.barcode,
@@ -2301,7 +2292,7 @@ describe('holds', () => {
       await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
       await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
       // One copy, and it is out: the hold is for a book somebody is holding.
-      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const t = await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
       const out = await api.checkout({
         memberCode: 'S001',
         barcode: (await api.getTitle(t.id)).copies[0]!.barcode,
@@ -2333,7 +2324,7 @@ describe('holds', () => {
     const { user } = await mountSignedIn('/students', async () => {
       await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
       await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
-      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const t = await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
       const out = await api.checkout({
         memberCode: 'S001',
         barcode: (await api.getTitle(t.id)).copies[0]!.barcode,
@@ -2370,7 +2361,7 @@ describe('holds', () => {
         role: 'assistant',
       })
       await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
-      await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
       await api.signOut()
       await api.signIn('desk@dandorasecondary.go.ke', 'x')
     })
@@ -2393,7 +2384,7 @@ describe('holds', () => {
       await api.createMember({ memberCode: 'S001', firstName: 'Kept', lastName: 'Student', type: 'student' })
       await api.createMember({ memberCode: 'S002', firstName: 'Second', lastName: 'Student', type: 'student' })
       await api.createMember({ memberCode: 'S003', firstName: 'Third', lastName: 'Student', type: 'student' })
-      const t = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+      const t = await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
       barcode = (await api.getTitle(t.id)).copies[0]!.barcode
       // S1 borrows the only copy, S2 holds it, S1 returns it: the copy is now
       // pinned behind the desk for S2.

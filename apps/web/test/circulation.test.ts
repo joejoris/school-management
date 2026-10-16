@@ -88,7 +88,7 @@ async function scene(options: { memberType?: 'student' | 'teacher' | 'staff' | '
     lastName: 'Student',
     type: options.memberType ?? 'student',
   })
-  const title = await desk.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+  const title = await desk.createTitle({ title: 'Things We Carry', copyCount: 1 })
   const detail = await desk.getTitle(title.id)
   return { member, title, copy: detail.copies[0]! }
 }

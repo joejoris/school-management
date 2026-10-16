@@ -130,7 +130,7 @@ async function deskAt(iso: string) {
     lastName: 'Student',
     type: 'student',
   })
-  const title = await api.createTitle({ title: 'Things We Carry', author: 'Tim O’Brien', copyCount: 1 })
+  const title = await api.createTitle({ title: 'Things We Carry', copyCount: 1 })
   const copy = (await api.getTitle(title.id)).copies[0]!
   return { api, member, barcode: copy.barcode, clock }
 }

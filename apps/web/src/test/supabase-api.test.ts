@@ -427,7 +427,7 @@ describe('one student’s borrowing history', () => {
       },
       { json: [{ id: 'c_1', barcode: 'BK-1', status: 'on_shelf', title_id: 't_1' }] },
       // 4. and the titles behind those copies.
-      { json: [{ id: 't_1', title: 'Things We Carry', author: 'Tim O’Brien' }] },
+      { json: [{ id: 't_1', title: 'Things We Carry' }] },
     ])
     const api = makeApi(null)
     const real = globalThis.fetch
@@ -454,7 +454,6 @@ describe('one student’s borrowing history', () => {
         memberCode: 'S001',
         studentName: 'Kept Student',
         title: 'Things We Carry',
-        author: 'Tim O’Brien',
         barcode: 'BK-1',
         copyStatus: 'on_shelf',
         status: 'returned',
@@ -532,7 +531,7 @@ describe('the register’s search on the live database', () => {
       // And the join's members, copies and titles for that page.
       { json: [{ id: 'm_1', member_code: 'S001', first_name: 'Kept', last_name: 'Student', form: 'Form 4', stream: null, grade: null, class_name: null }] },
       { json: [{ id: 'c_1', barcode: 'BK-1', status: 'on_shelf', title_id: 't_1' }] },
-      { json: [{ id: 't_1', title: 'Things We Carry', author: 'Tim O’Brien' }] },
+      { json: [{ id: 't_1', title: 'Things We Carry' }] },
     ])
     const api = makeApi(null)
     const real = globalThis.fetch
@@ -929,8 +928,7 @@ describe('editing a title', () => {
           {
             id: 't_1',
             title: 'Things We Carry',
-            author: 'Tim O’Brien',
-            isbn: '9780000000000',
+                isbn: '9780000000000',
             publisher: null,
             published_year: 1990,
             subject: null,
@@ -947,7 +945,6 @@ describe('editing a title', () => {
     try {
       const updated = await api.updateTitle('t_1', {
         title: 'Things We Carry',
-        author: 'Tim O’Brien',
         isbn: '9780000000000',
         publisher: null,
         publishedYear: 1990,
@@ -964,7 +961,6 @@ describe('editing a title', () => {
       // And the answer read back is the row the database now holds.
       expect(updated).toMatchObject({
         id: 't_1',
-        author: 'Tim O’Brien',
         publishedYear: 1990,
         callNumber: 'F OBR',
       })

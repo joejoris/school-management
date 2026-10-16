@@ -285,7 +285,7 @@ describe('the register row', () => {
     const row = LoanRow.parse({
       loanId: 'l_1', memberCode: 'S001', studentName: 'Kept Student',
       grade: null, form: 'Form 3', stream: 'Red Stream', className: null,
-      title: 'Things We Carry', author: 'Tim O’Brien', barcode: 'BK-0001',
+      title: 'Things We Carry', barcode: 'BK-0001',
       copyStatus: 'on_loan', checkedOutAt: '2026-09-01T08:00:00.000Z',
       dueAt: '2026-09-15T08:00:00.000Z', returnedAt: null, status: 'active',
       daysOverdue: 0, voidReason: null,
@@ -299,7 +299,7 @@ describe('the register row', () => {
     // A book returned before its due date is not "minus three days overdue".
     const row = LoanRow.parse({
       loanId: 'l', memberCode: 'S', studentName: 'A B', grade: null, form: null,
-      stream: null, className: null, title: 'T', author: 'A', barcode: 'BK',
+      stream: null, className: null, title: 'T', barcode: 'BK',
       copyStatus: 'on_loan', checkedOutAt: '2026-09-01T08:00:00.000Z',
       dueAt: '2026-09-15T08:00:00.000Z', returnedAt: '2026-09-10T08:00:00.000Z',
       status: 'returned', daysOverdue: 0, voidReason: null,

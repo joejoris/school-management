@@ -25,9 +25,7 @@
 --  lives inside the function so that calling it by hand over PostgREST gets the
 --  same answer as pressing the button.
 --
---  Each also writes a loan_event and an audit row. A loan whose author is unknown
---  is a loan nobody can defend, and the register's history is the reason for
---  recording the author in the first place.
+--  Each also writes a loan_event and an audit row.
 -- ═══════════════════════════════════════════════════════════════════════
 
 begin;

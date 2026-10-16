@@ -95,7 +95,6 @@ export function registerRow(r: {
   stream: string | null
   grade: string | null
   title: string
-  author: string
   barcode: string
   checkedOutAt: string
   dueAt: string
@@ -113,7 +112,6 @@ export function registerRow(r: {
     r.stream,
     r.grade,
     r.title,
-    r.author,
     r.barcode,
     day(r.checkedOutAt),
     day(r.dueAt),

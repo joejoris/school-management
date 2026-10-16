@@ -46,7 +46,7 @@ import type { Page, PageQuery } from './page.ts'
 // ── Queries ─────────────────────────────────────────────────────────
 
 export interface TitleQuery extends PageQuery {
-  /** Free text across title, author, ISBN and call number. */
+  /** Free text across title, ISBN and call number. */
   q?: string
   subject?: string
   availability?: 'any' | 'available' | 'unavailable'
@@ -417,7 +417,6 @@ export interface LibraryApi {
 // Local aliases, so this file does not have to re-export the input shapes.
 type TitleCreateInputLike = {
   title: string
-  author: string
   isbn?: string | null
   publisher?: string | null
   publishedYear?: number | null

@@ -368,7 +368,7 @@ if (want('circulation')) {
     if (member) created.members.push(member.id)
 
     const title = await expectOk('add a title with one copy', () =>
-      api.createTitle({ title: BOOK, author: 'Probe Author', copyCount: 1 }),
+      api.createTitle({ title: BOOK, copyCount: 1 }),
     )
     if (title) {
       created.titles.push(title.id)

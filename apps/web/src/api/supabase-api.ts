@@ -928,7 +928,6 @@ export class SupabaseApi implements LibraryApi {
         stream: member?.stream ?? null,
         className: member?.className ?? null,
         title: title?.title ?? '—',
-        author: title?.author ?? '—',
         barcode: copy?.barcode ?? '—',
         copyStatus: copy?.status ?? 'on_shelf',
         checkedOutAt: l.checkedOutAt,
@@ -1010,7 +1009,7 @@ export class SupabaseApi implements LibraryApi {
   }
 
   async searchTitles(query: TitleQuery): Promise<Page<TitleSummary>> {
-    const qFilter = this.textFilter(query.q, ['title', 'author'])
+    const qFilter = this.textFilter(query.q, ['title'])
     return this.page<TitleSummary>('titles', query, { ...(qFilter ? { and: qFilter } : {}) })
   }
 
@@ -1022,7 +1021,6 @@ export class SupabaseApi implements LibraryApi {
 
   async createTitle(input: {
     title: string
-    author: string
     isbn?: string | null
     publisher?: string | null
     publishedYear?: number | null

@@ -145,7 +145,6 @@ export const Title = z.object({
   id: Id,
   isbn: z.string().nullable().default(null),
   title: z.string().min(1),
-  author: z.string().min(1),
   publisher: z.string().nullable().default(null),
   publishedYear: z.number().int().nullable().default(null),
   edition: z.string().nullable().default(null),
@@ -218,7 +217,6 @@ export const LoanRow = z.object({
   stream: z.string().nullable(),
   className: z.string().nullable(),
   title: z.string(),
-  author: z.string(),
   barcode: z.string(),
   copyStatus: z.enum(CopyStatus),
   checkedOutAt: IsoDateTime,
@@ -314,7 +312,6 @@ export type TitleDetail = z.infer<typeof TitleDetail>
 export const TitleSummary = z.object({
   id: Id,
   title: z.string(),
-  author: z.string(),
   isbn: z.string().nullable(),
   callNumber: z.string().nullable(),
   copyCount: z.number().int().min(0),
@@ -408,7 +405,6 @@ export type ReportResult = z.infer<typeof ReportResult>
 /** What a form supplies when creating a title. */
 export const TitleCreateInput = z.object({
   title: z.string().min(1),
-  author: z.string().min(1),
   isbn: z.string().nullable().default(null),
   publisher: z.string().nullable().default(null),
   publishedYear: z.number().int().nullable().default(null),

@@ -167,7 +167,6 @@ create table if not exists titles (
   id             uuid primary key default gen_random_uuid(),
   isbn           text,
   title          text not null,
-  author         text not null,
   publisher      text,
   published_year int,
   edition        text,
@@ -332,7 +331,7 @@ create index if not exists copies_barcode_idx  on copies (barcode);
 create index if not exists copies_title_idx    on copies (title_id);
 create index if not exists copies_status_idx   on copies (status);
 create index if not exists titles_title_idx    on titles (lower(title));
-create index if not exists titles_author_idx   on titles (lower(author));
+
 
 -- The register: open loans, newest first, and overdue ones by deadline.
 create index if not exists loans_open_idx on loans (checked_out_at desc) where status = 'active';

@@ -837,7 +837,6 @@ export class MockApi implements LibraryApi {
       stream: member?.stream ?? null,
       className: member?.className ?? null,
       title: title?.title ?? '—',
-      author: title?.author ?? '—',
       barcode: copy?.barcode ?? '—',
       copyStatus: copy?.status ?? 'on_shelf',
       checkedOutAt: l.checkedOutAt,
@@ -976,7 +975,7 @@ export class MockApi implements LibraryApi {
     let rows = this.db.titles
     if (q) {
       rows = rows.filter((t) =>
-        [t.title, t.author, t.isbn ?? '', t.callNumber ?? ''].some((v) =>
+        [t.title, t.isbn ?? '', t.callNumber ?? ''].some((v) =>
           v.toLowerCase().includes(q),
         ),
       )
@@ -991,7 +990,6 @@ export class MockApi implements LibraryApi {
       return {
         id: t.id,
         title: t.title,
-        author: t.author,
         isbn: t.isbn,
         callNumber: t.callNumber,
         copyCount: copies.length,
@@ -1015,7 +1013,6 @@ export class MockApi implements LibraryApi {
 
   async createTitle(input: {
     title: string
-    author: string
     isbn?: string | null
     publisher?: string | null
     publishedYear?: number | null
@@ -1029,7 +1026,6 @@ export class MockApi implements LibraryApi {
       id: `t_${this.db.titles.length + 1}`,
       isbn: input.isbn ?? null,
       title: input.title,
-      author: input.author,
       publisher: input.publisher ?? null,
       publishedYear: input.publishedYear ?? null,
       edition: null,
@@ -1439,7 +1435,6 @@ export class MockApi implements LibraryApi {
               return [
                 t.callNumber ?? '',
                 t.title,
-                t.author,
                 String(copies.length),
                 String(copies.filter((c) => c.status === 'on_shelf').length),
               ]
